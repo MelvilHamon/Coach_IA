@@ -1,77 +1,243 @@
+import os
+import json
+import time
 import requests
 import pandas as pd
-import os
+from datetime import datetime, timezone
 from dotenv import load_dotenv
-
 
 load_dotenv()
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 REFRESH_TOKEN = os.getenv("REFRESH_TOKEN")
 
+DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+CSV_PATH = os.path.join(DATA_DIR, "mes_activites_strava.csv")
+SYNC_STATE_PATH = os.path.join(DATA_DIR, "sync_state.json")
+
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
+
 def refresh_access_token():
     response = requests.post(
         url="https://www.strava.com/oauth/token",
         data={
-            'client_id': CLIENT_ID,
-            'client_secret': CLIENT_SECRET,
-            'grant_type': 'refresh_token',
-            'refresh_token': REFRESH_TOKEN
-        }
+            "client_id": CLIENT_ID,
+            "client_secret": CLIENT_SECRET,
+            "grant_type": "refresh_token",
+            "refresh_token": REFRESH_TOKEN,
+        },
     )
-    return response.json()['access_token']
+    response.raise_for_status()
+    return response.json()["access_token"]
 
-def get_activities(token, n=10):
-    headers = {'Authorization': f'Bearer {token}'}
-    params = {'per_page': n, 'page': 1}
-    response = requests.get("https://www.strava.com/api/v3/athlete/activities", headers=headers, params=params)
+
+# ── Fetch activités ───────────────────────────────────────────────────────────
+
+def _fetch_page(token, page, per_page=100, before=None, after=None):
+    headers = {"Authorization": f"Bearer {token}"}
+    params = {"per_page": per_page, "page": page}
+    if before is not None:
+        params["before"] = int(before)
+    if after is not None:
+        params["after"] = int(after)
+    response = requests.get(
+        "https://www.strava.com/api/v3/athlete/activities",
+        headers=headers,
+        params=params,
+    )
+    response.raise_for_status()
     return response.json()
 
-def get_activity_description(activity_id, token):
-    headers = {'Authorization': f'Bearer {token}'}
-    response = requests.get(f"https://www.strava.com/api/v3/activities/{activity_id}", headers=headers)
-    return response.json().get('description', '')
 
-def format_activities(activities, token, existing_ids):
-    # Filter new activities
-    new_acts = [act for act in activities if isinstance(act, dict) and act['id'] not in existing_ids]
-    if not new_acts:
+def get_all_new_activities(token, existing_ids, per_page=100):
+    """
+    Parcourt toutes les pages Strava et retourne uniquement les activités
+    dont l'ID n'est pas encore dans existing_ids.
+    S'arrête dès qu'une page ne contient que des activités déjà connues.
+    """
+    all_new = []
+    page = 1
+    while True:
+        activities = _fetch_page(token, page=page, per_page=per_page)
+        if not activities:
+            break
+
+        new = [a for a in activities if isinstance(a, dict) and a["id"] not in existing_ids]
+        all_new.extend(new)
+
+        # Si la page contenait au moins un ID déjà connu → on a rattrapé le retard
+        if len(new) < len(activities):
+            break
+
+        page += 1
+        time.sleep(0.3)  # respecter le rate-limit Strava (100 req/15 min)
+
+    return all_new
+
+
+def backfill_activities(token, existing_ids, after_date="2023-01-01", per_page=100):
+    """
+    Récupère TOUTES les activités depuis after_date, même celles plus anciennes
+    que les activités déjà connues. Utilise le paramètre 'after' de l'API Strava.
+    """
+    after_epoch = int(datetime.strptime(after_date, "%Y-%m-%d")
+                      .replace(tzinfo=timezone.utc).timestamp())
+
+    all_new = []
+    page = 1
+    while True:
+        activities = _fetch_page(token, page=page, per_page=per_page,
+                                 after=after_epoch)
+        if not activities:
+            break
+
+        new = [a for a in activities if isinstance(a, dict) and a["id"] not in existing_ids]
+        all_new.extend(new)
+
+        if len(activities) < per_page:
+            break  # dernière page
+
+        page += 1
+        time.sleep(0.3)
+
+    print(f"Backfill depuis {after_date} : {len(all_new)} nouvelles activités trouvées")
+    return all_new
+
+
+def get_activity_description(activity_id, token):
+    headers = {"Authorization": f"Bearer {token}"}
+    response = requests.get(
+        f"https://www.strava.com/api/v3/activities/{activity_id}",
+        headers=headers,
+    )
+    if response.status_code != 200:
+        return ""
+    return response.json().get("description", "") or ""
+
+
+# ── Formatage ─────────────────────────────────────────────────────────────────
+
+def format_activities(activities, token):
+    if not activities:
         return pd.DataFrame()
 
-    df = pd.DataFrame(new_acts)
-    df['ID'] = df['id']
-    df['Nom'] = df['name']
-    df['Date'] = df['start_date_local']
-    df['Distance (km)'] = (df['distance'] / 1000).round(2)
-    df['Temps (min)'] = (df['moving_time'] / 60).round(1)
-    df['Allure (min/km)'] = ((df['moving_time'] / 60) / (df['distance'] / 1000)).round(2)
-    df['Dénivelé (m)'] = df.get('total_elevation_gain', 0)
-    df['Fréquence cardiaque (bpm)'] = df.get('average_heartrate', None)
-    df['Type'] = df['type']
-    # Fetch description only if needed
-    df['Commentaire'] = [get_activity_description(act['id'], token) for act in new_acts]
-    # Select columns
-    return df[['ID', 'Nom', 'Date', 'Distance (km)', 'Temps (min)', 'Allure (min/km)', 'Dénivelé (m)', 'Fréquence cardiaque (bpm)', 'Type', 'Commentaire']]
+    rows = []
+    for act in activities:
+        distance_km = act.get("distance", 0) / 1000
+        moving_time_min = act.get("moving_time", 0) / 60
+        pace = moving_time_min / distance_km if distance_km > 0 else None
 
-if __name__ == "__main__":
+        rows.append({
+            "ID": act["id"],
+            "Nom": act.get("name", ""),
+            "Date": act.get("start_date_local", ""),
+            "Distance (km)": round(distance_km, 2),
+            "Temps (min)": round(moving_time_min, 1),
+            "Allure (min/km)": round(pace, 2) if pace else None,
+            "Dénivelé (m)": act.get("total_elevation_gain", 0),
+            "Fréquence cardiaque (bpm)": act.get("average_heartrate"),
+            "Type": act.get("sport_type") or act.get("type", ""),
+            "Commentaire": get_activity_description(act["id"], token),
+        })
+        time.sleep(0.2)  # éviter le rate-limit sur les descriptions
+
+    return pd.DataFrame(rows)
+
+
+# ── Sync state ────────────────────────────────────────────────────────────────
+
+def load_sync_state():
+    if os.path.exists(SYNC_STATE_PATH):
+        with open(SYNC_STATE_PATH) as f:
+            return json.load(f)
+    return {}
+
+
+def save_sync_state(state):
+    with open(SYNC_STATE_PATH, "w") as f:
+        json.dump(state, f, indent=2, ensure_ascii=False)
+
+
+# ── Entrypoint ────────────────────────────────────────────────────────────────
+
+def sync_activities():
     token = refresh_access_token()
-    activities = get_activities(token)
 
-    output_path = os.path.abspath("./data/mes_activites_strava.csv")
-    if os.path.exists(output_path):
-        df_old = pd.read_csv(output_path)
-        existing_ids = set(df_old['ID']) if 'ID' in df_old.columns else set()
+    os.makedirs(DATA_DIR, exist_ok=True)
+    if os.path.exists(CSV_PATH):
+        df_old = pd.read_csv(CSV_PATH)
+        existing_ids = set(df_old["ID"].astype(int)) if "ID" in df_old.columns else set()
     else:
         df_old = pd.DataFrame()
         existing_ids = set()
 
-    df_new = format_activities(activities, token, existing_ids)
+    print(f"Activités connues : {len(existing_ids)}")
+    new_activities = get_all_new_activities(token, existing_ids)
 
-    if df_new.empty:
-        print("Aucune nouvelle activité trouvée.")
+    if not new_activities:
+        print("Aucune nouvelle activité.")
     else:
+        df_new = format_activities(new_activities, token)
         df_combined = pd.concat([df_old, df_new], ignore_index=True)
-        df_combined['Date'] = pd.to_datetime(df_combined['Date'], format='mixed',utc=True)
-        df_combined = df_combined.sort_values(by='Date', ascending=True)
-        df_combined.to_csv(output_path, index=False, encoding='utf-8-sig')
-        print(f"{len(df_new)} nouvelles activités ajoutées dans : {output_path}")
+        df_combined["Date"] = pd.to_datetime(df_combined["Date"], format="mixed", utc=True)
+        df_combined = df_combined.sort_values("Date", ascending=True)
+        df_combined.to_csv(CSV_PATH, index=False, encoding="utf-8-sig")
+        print(f"{len(df_new)} nouvelles activités ajoutées → {CSV_PATH}")
+
+    state = load_sync_state()
+    state["strava_last_sync"] = datetime.now(timezone.utc).isoformat()
+    state["strava_activities_total"] = len(existing_ids) + len(new_activities if new_activities else [])
+    # Compat : garder les anciennes clés le temps de la transition
+    state["activities_last_sync"] = state["strava_last_sync"]
+    state["activities_total"] = state["strava_activities_total"]
+    save_sync_state(state)
+
+    return len(new_activities)
+
+
+def sync_backfill(after_date="2023-01-01"):
+    """Récupère les activités historiques depuis after_date."""
+    token = refresh_access_token()
+
+    os.makedirs(DATA_DIR, exist_ok=True)
+    if os.path.exists(CSV_PATH):
+        df_old = pd.read_csv(CSV_PATH)
+        existing_ids = set(df_old["ID"].astype(int)) if "ID" in df_old.columns else set()
+    else:
+        df_old = pd.DataFrame()
+        existing_ids = set()
+
+    print(f"Activités connues : {len(existing_ids)}")
+    new_activities = backfill_activities(token, existing_ids, after_date=after_date)
+
+    if not new_activities:
+        print("Aucune nouvelle activité trouvée dans la période.")
+        return 0
+
+    df_new = format_activities(new_activities, token)
+    df_combined = pd.concat([df_old, df_new], ignore_index=True)
+    df_combined["Date"] = pd.to_datetime(df_combined["Date"], format="mixed", utc=True)
+    df_combined = df_combined.drop_duplicates(subset=["ID"], keep="first")
+    df_combined = df_combined.sort_values("Date", ascending=True)
+    df_combined.to_csv(CSV_PATH, index=False, encoding="utf-8-sig")
+    print(f"{len(df_new)} activités ajoutées (backfill) → {CSV_PATH}")
+    print(f"Total : {len(df_combined)} activités")
+
+    state = load_sync_state()
+    state["strava_last_sync"] = datetime.now(timezone.utc).isoformat()
+    state["strava_activities_total"] = len(df_combined)
+    state["activities_last_sync"] = state["strava_last_sync"]
+    state["activities_total"] = state["strava_activities_total"]
+    save_sync_state(state)
+
+    return len(df_new)
+
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "--backfill":
+        after = sys.argv[2] if len(sys.argv) > 2 else "2023-01-01"
+        sync_backfill(after_date=after)
+    else:
+        sync_activities()

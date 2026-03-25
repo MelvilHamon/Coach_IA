@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CoachAgent</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@300;400;500&family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,400&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="css/style.css?v=3">
+</head>
+<body>
+
+  <!-- Header -->
+  <header class="ca-header">
+    <div class="ca-header-inner">
+      <div class="ca-header-title">Coach<em>Agent</em></div>
+      <div class="ca-header-meta">
+        <span id="header-date">—</span>
+        <span id="header-count">— activités</span>
+        <span id="header-sync" class="ca-sync-indicator">—</span>
+        <button id="sync-btn" class="ca-sync-btn" title="Synchroniser">↻</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Navigation -->
+  <nav class="ca-nav">
+    <button class="ca-nav-tab active" data-section="overview">Vue d'ensemble</button>
+    <button class="ca-nav-tab" data-section="history">Historique</button>
+    <button class="ca-nav-tab" data-section="profil">Profil</button>
+    <button class="ca-nav-tab" data-section="progression">Progression</button>
+    <button class="ca-nav-tab" data-section="charge">Charge</button>
+    <button class="ca-nav-tab" data-section="analyse">Analyse</button>
+  </nav>
+
+  <!-- Contenu principal -->
+  <main id="page-content" class="ca-main">
+    <div class="ca-loading">Chargement…</div>
+  </main>
+
+  <!-- Scripts -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.plot.ly/plotly-2.35.0.min.js" charset="utf-8"></script>
+  <script type="module" src="js/app.js?v=3"></script>
+
+</body>
+</html>
