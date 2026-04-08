@@ -5,16 +5,19 @@
 import { api } from '../api.js';
 import { el, metricCard, sectionTitle, distBar, fmt, loading, empty, acwrStatus, riskStatus } from '../components.js';
 import { plotVolume } from '../charts.js';
+import { getCurrentSport } from '../state.js';
 
 export async function renderOverview(container) {
   container.innerHTML = '';
   container.appendChild(loading());
 
+  const sport = getCurrentSport();
+
   try {
     const [activitiesRes, volumeRes, distRes] = await Promise.all([
-      api.activities({ limit: 1 }),
-      api.chartVolume(),
-      api.chartDistribution(),
+      api.activities({ limit: 1, sport }),
+      api.chartVolume(sport),
+      api.chartDistribution(sport),
     ]);
 
     container.innerHTML = '';

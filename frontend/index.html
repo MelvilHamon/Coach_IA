@@ -3,47 +3,87 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CoachAgent</title>
+  <title>PacePilot</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@300;400;500&family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,400&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@300;400;500&family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,400&family=JetBrains+Mono:wght@300;400;500&family=Lora:ital,wght@0,400;0,500;1,400;1,500&family=Inter:wght@200;300;400&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="css/style.css?v=3">
+  <link rel="stylesheet" href="css/style.css?v=4">
 </head>
 <body>
 
-  <!-- Header -->
-  <header class="ca-header">
-    <div class="ca-header-inner">
-      <div class="ca-header-title">Coach<em>Agent</em></div>
-      <div class="ca-header-meta">
-        <span id="header-date">—</span>
-        <span id="header-count">— activités</span>
-        <span id="header-sync" class="ca-sync-indicator">—</span>
-        <button id="sync-btn" class="ca-sync-btn" title="Synchroniser">↻</button>
-      </div>
+  <!-- ══════ Auth page (OTP magic code) ══════ -->
+  <div id="auth-page" class="ca-auth-page" style="display:none;">
+    <div class="ca-auth-card">
+      <div class="ca-auth-logo">Pace<em>Pilot</em> <img src="/img/compatible_strava.svg" alt="Compatible with Strava" class="ca-strava-badge"></div>
+      <p class="ca-auth-subtitle">Ton copilote de course</p>
+
+      <!-- Step 1: Email -->
+      <form id="otp-email-form" class="ca-auth-form">
+        <input type="email" id="otp-email" class="ca-input" placeholder="Email" required autocomplete="email">
+        <div id="otp-email-error" class="ca-auth-error" style="display:none;"></div>
+        <button type="submit" class="ca-btn accent ca-auth-btn">Recevoir un code</button>
+      </form>
+
+      <!-- Step 2: Code -->
+      <form id="otp-code-form" class="ca-auth-form" style="display:none;">
+        <p class="ca-auth-hint">Un code a été envoyé à <strong id="otp-email-display"></strong></p>
+        <input type="text" id="otp-code" class="ca-input ca-otp-input" placeholder="Code à 6 chiffres" required autocomplete="one-time-code" inputmode="numeric" maxlength="6" pattern="[0-9]{6}">
+        <div id="otp-code-error" class="ca-auth-error" style="display:none;"></div>
+        <button type="submit" class="ca-btn accent ca-auth-btn">Valider</button>
+        <div class="ca-auth-toggle">
+          <span id="otp-back" class="ca-auth-link">Changer d'email</span>
+          <span id="otp-resend" class="ca-auth-link">Renvoyer le code</span>
+        </div>
+      </form>
     </div>
-  </header>
+  </div>
 
-  <!-- Navigation -->
-  <nav class="ca-nav">
-    <button class="ca-nav-tab active" data-section="overview">Vue d'ensemble</button>
-    <button class="ca-nav-tab" data-section="history">Historique</button>
-    <button class="ca-nav-tab" data-section="profil">Profil</button>
-    <button class="ca-nav-tab" data-section="progression">Progression</button>
-    <button class="ca-nav-tab" data-section="charge">Charge</button>
-    <button class="ca-nav-tab" data-section="analyse">Analyse</button>
-  </nav>
+  <!-- ══════ App (hidden until authenticated) ══════ -->
+  <div id="app-shell" style="display:none;">
 
-  <!-- Contenu principal -->
-  <main id="page-content" class="ca-main">
-    <div class="ca-loading">Chargement…</div>
-  </main>
+    <!-- Header -->
+    <header class="ca-header">
+      <div class="ca-header-inner">
+        <div class="ca-header-title">Pace<em>Pilot</em> <img src="/img/compatible_strava.svg" alt="Compatible with Strava" class="ca-strava-badge-header"></div>
+        <div class="ca-header-meta">
+          <span id="header-user"></span>
+          <span id="header-date">—</span>
+          <span id="header-count">— activités</span>
+          <span id="header-sync" class="ca-sync-indicator">—</span>
+          <button id="sync-btn" class="ca-sync-btn" title="Synchroniser">↻</button>
+          <button id="logout-btn" class="ca-sync-btn" title="Déconnexion">⏻</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Navigation -->
+    <nav class="ca-nav">
+      <button class="ca-nav-tab active" data-section="overview">Vue d'ensemble</button>
+      <button class="ca-nav-tab" data-section="history">Historique</button>
+      <button class="ca-nav-tab" data-section="profil">Profil</button>
+      <button class="ca-nav-tab" data-section="progression">Progression</button>
+      <button class="ca-nav-tab" data-section="charge">Charge</button>
+      <button class="ca-nav-tab" data-section="calendrier">Calendrier</button>
+      <button class="ca-nav-tab" data-section="analyse">Analyse</button>
+      <button class="ca-nav-tab" data-section="settings">Paramètres</button>
+      <div class="ca-sport-selector">
+        <button class="ca-sport-btn active" data-sport="run" title="Course à pied">Run</button>
+        <button class="ca-sport-btn" data-sport="velo" title="Vélo">Vélo</button>
+      </div>
+    </nav>
+
+    <!-- Contenu principal -->
+    <main id="page-content" class="ca-main">
+      <div class="ca-loading">Chargement…</div>
+    </main>
+
+  </div>
 
   <!-- Scripts -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.plot.ly/plotly-2.35.0.min.js" charset="utf-8"></script>
-  <script type="module" src="js/app.js?v=3"></script>
+  <script type="module" src="js/app.js?v=4"></script>
 
 </body>
 </html>

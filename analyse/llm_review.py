@@ -21,32 +21,49 @@ from openai import OpenAI
 load_dotenv()
 
 _ROOT        = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_ENRICHED    = os.path.join(_ROOT, "data", "activities_enriched.csv")
-_MEMOIRE     = os.path.join(_ROOT, "data", "memoire.txt")
-_REVIEWS_DIR = os.path.join(_ROOT, "data", "reviews")
-_CONFIG_PATH = os.path.join(_ROOT, "config.json")
+
+# Legacy defaults (single-user fallback)
+_DEFAULT_DATA_DIR = os.path.join(_ROOT, "data")
+_DEFAULT_CONFIG   = os.path.join(_ROOT, "config.json")
 
 
-def _load_config() -> dict:
-    with open(_CONFIG_PATH, encoding="utf-8") as f:
+def _resolve_paths(data_dir: str | None = None, config_path: str | None = None) -> dict:
+    """Resolve all paths, user-scoped if data_dir is provided."""
+    d = data_dir or _DEFAULT_DATA_DIR
+    if config_path:
+        cfg = config_path
+    elif data_dir:
+        cfg = os.path.join(d, "config.json")
+    else:
+        cfg = _DEFAULT_CONFIG
+    return {
+        "enriched":    os.path.join(d, "activities_enriched.csv"),
+        "memoire":     os.path.join(d, "memoire.txt"),
+        "reviews_dir": os.path.join(d, "reviews"),
+        "config":      cfg,
+    }
+
+
+def _load_config(config_path: str) -> dict:
+    with open(config_path, encoding="utf-8") as f:
         return json.load(f)
 
 
-def _review_path(activity_id: int) -> str:
-    return os.path.join(_REVIEWS_DIR, f"{activity_id}.json")
+def _review_path(activity_id: int, reviews_dir: str) -> str:
+    return os.path.join(reviews_dir, f"{activity_id}.json")
 
 
-def _load_cached(activity_id: int) -> dict | None:
-    p = _review_path(activity_id)
+def _load_cached(activity_id: int, reviews_dir: str) -> dict | None:
+    p = _review_path(activity_id, reviews_dir)
     if os.path.exists(p):
         with open(p, encoding="utf-8") as f:
             return json.load(f)
     return None
 
 
-def _save(activity_id: int, data: dict) -> None:
-    os.makedirs(_REVIEWS_DIR, exist_ok=True)
-    with open(_review_path(activity_id), "w", encoding="utf-8") as f:
+def _save(activity_id: int, data: dict, reviews_dir: str) -> None:
+    os.makedirs(reviews_dir, exist_ok=True)
+    with open(_review_path(activity_id, reviews_dir), "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
@@ -165,7 +182,12 @@ Réponds en français. Structure ta réponse en 4 parties courtes :
 """.strip()
 
 
-def generate_review(activity_id: int, force: bool = False) -> dict:
+def generate_review(
+    activity_id: int,
+    force: bool = False,
+    data_dir: str | None = None,
+    config_path: str | None = None,
+) -> dict:
     """
     Génère (ou recharge depuis le cache) la review GPT pour une activité.
 
@@ -173,40 +195,45 @@ def generate_review(activity_id: int, force: bool = False) -> dict:
     ----------
     activity_id : ID Strava de l'activité
     force       : recalculer même si le cache existe
+    data_dir    : répertoire de données utilisateur (défaut: data/)
+    config_path : chemin vers config.json (défaut: config.json racine)
 
     Retourne
     --------
     dict avec clés : activity_id, date, session_type, review_text, generated_at, cached
     """
+    paths = _resolve_paths(data_dir, config_path)
+
     if not force:
-        cached = _load_cached(activity_id)
+        cached = _load_cached(activity_id, paths["reviews_dir"])
         if cached:
             cached["cached"] = True
             return cached
 
-    if not os.path.exists(_ENRICHED):
+    enriched = paths["enriched"]
+    if not os.path.exists(enriched):
         raise FileNotFoundError(
-            f"Fichier enrichi introuvable : {_ENRICHED}\n"
+            f"Fichier enrichi introuvable : {enriched}\n"
             "Lancer d'abord : python3 analyse/run_analysis.py"
         )
 
-    df = pd.read_csv(_ENRICHED)
+    df = pd.read_csv(enriched)
     df["Date"] = pd.to_datetime(df["Date"], utc=True)
 
     mask = df["ID"] == activity_id
     if not mask.any():
-        raise ValueError(f"Activité {activity_id} introuvable dans {_ENRICHED}")
+        raise ValueError(f"Activité {activity_id} introuvable dans {enriched}")
 
     row      = df[mask].iloc[0]
     act_date = row["Date"]
     window   = df[df["Date"] >= act_date - pd.Timedelta(days=14)].copy()
 
     memoire = ""
-    if os.path.exists(_MEMOIRE):
-        with open(_MEMOIRE, encoding="utf-8") as f:
+    if os.path.exists(paths["memoire"]):
+        with open(paths["memoire"], encoding="utf-8") as f:
             memoire = f.read()
 
-    config  = _load_config()
+    config  = _load_config(paths["config"])
     llm_cfg = config.get("llm", {})
     prompt  = _build_prompt(row, window, memoire)
 
@@ -238,15 +265,16 @@ def generate_review(activity_id: int, force: bool = False) -> dict:
         "model":        llm_cfg.get("model", "gpt-4o-mini"),
         "cached":       False,
     }
-    _save(activity_id, result)
+    _save(activity_id, result, paths["reviews_dir"])
     return result
 
 
 if __name__ == "__main__":
     import sys
 
+    paths = _resolve_paths()
     if len(sys.argv) < 2:
-        df  = pd.read_csv(_ENRICHED)
+        df  = pd.read_csv(paths["enriched"])
         aid = int(df["ID"].iloc[-1])
         print(f"Aucun ID fourni — revue de la dernière activité ({aid})")
     else:

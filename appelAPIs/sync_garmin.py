@@ -134,32 +134,49 @@ def _parse_activity(act: dict) -> dict:
 
 def _load_index() -> dict:
     """Charge activities.json → dict keyed by garmin_id (int)."""
-    if os.path.exists(_INDEX_PATH):
-        with open(_INDEX_PATH, encoding="utf-8") as f:
+    return _load_index_from(_INDEX_PATH)
+
+
+def _load_index_from(index_path: str) -> dict:
+    """Charge activities.json → dict keyed by garmin_id (int)."""
+    if os.path.exists(index_path):
+        with open(index_path, encoding="utf-8") as f:
             entries = json.load(f)
         return {int(e["garmin_id"]): e for e in entries}
     return {}
 
 
 def _save_index(index: dict) -> None:
-    os.makedirs(_GARMIN_DIR, exist_ok=True)
+    _save_index_to(_INDEX_PATH, _GARMIN_DIR, index)
+
+
+def _save_index_to(index_path: str, garmin_dir: str, index: dict) -> None:
+    os.makedirs(garmin_dir, exist_ok=True)
     entries = sorted(index.values(), key=lambda e: e.get("start_time_utc", ""), reverse=True)
-    with open(_INDEX_PATH, "w", encoding="utf-8") as f:
+    with open(index_path, "w", encoding="utf-8") as f:
         json.dump(entries, f, indent=2, ensure_ascii=False)
 
 
 # ── Sync state ────────────────────────────────────────────────────────────────
 
 def _load_sync_state() -> dict:
-    if os.path.exists(_SYNC_STATE):
-        with open(_SYNC_STATE, encoding="utf-8") as f:
+    return _load_sync_state_from(_SYNC_STATE)
+
+
+def _load_sync_state_from(path: str) -> dict:
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
             return json.load(f)
     return {}
 
 
 def _save_sync_state(state: dict) -> None:
-    os.makedirs(os.path.dirname(_SYNC_STATE), exist_ok=True)
-    with open(_SYNC_STATE, "w", encoding="utf-8") as f:
+    _save_sync_state_to(_SYNC_STATE, state)
+
+
+def _save_sync_state_to(path: str, state: dict) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2, ensure_ascii=False)
 
 
@@ -213,34 +230,43 @@ def _fetch_stream(api, garmin_id: int, start_time_utc: str) -> list | None:
 
 # ── Sync principal ─────────────────────────────────────────────────────────────
 
-def sync_all(max_activities: int = 1000, force_streams: bool = False) -> None:
+def sync_all(max_activities: int = 1000, force_streams: bool = False,
+             data_dir: str = None, garth_dir: str = None,
+             garmin_creds: dict = None) -> None:
     """
-    1. Charge l'index existant data/garmin/activities.json
+    1. Charge l'index existant garmin/activities.json
     2. Récupère toutes les activités Garmin (pagination par blocs de 100)
     3. Pour chaque activité :
        a. Ajoute à l'index si absente
        b. Télécharge le stream GPS si absent (ou force_streams=True) et has_gps=True
        c. sleep(0.5) entre chaque téléchargement
     4. Sauvegarde l'index et sync_state.json
+
+    Parameters
+    ----------
+    data_dir : répertoire de données utilisateur (défaut: data/)
+    garth_dir : répertoire des tokens garth (défaut: .garth/)
+    garmin_creds : dict avec email/password (optionnel, pour login initial)
     """
+    # Resolve paths
+    _garmin_dir = os.path.join(data_dir, "garmin") if data_dir else _GARMIN_DIR
+    _streams_dir = os.path.join(_garmin_dir, "streams")
+    _index_path = os.path.join(_garmin_dir, "activities.json")
+    _sync_state = os.path.join(data_dir, "sync_state.json") if data_dir else _SYNC_STATE
+
     t_start = time.time()
 
     # Auth
     try:
-        api = _garmin_login()
-    except EnvironmentError as e:
-        print(f"\nErreur : {e}")
-        sys.exit(1)
+        api = _garmin_login(garth_dir=garth_dir, garmin_creds=garmin_creds)
     except Exception as e:
-        print(f"\nÉchec de l'authentification Garmin : {e}")
-        print("Vérifiez vos identifiants dans .env (GARMIN_EMAIL / GARMIN_PASSWORD).")
-        sys.exit(1)
+        raise RuntimeError(f"Échec de l'authentification Garmin : {e}") from e
 
     # Création des répertoires
-    os.makedirs(_STREAMS_DIR, exist_ok=True)
+    os.makedirs(_streams_dir, exist_ok=True)
 
     # Chargement index existant
-    index = _load_index()
+    index = _load_index_from(_index_path)
     known_ids = set(index.keys())
     log.info("Index existant : %d activités", len(known_ids))
 
@@ -259,7 +285,7 @@ def sync_all(max_activities: int = 1000, force_streams: bool = False) -> None:
         if gid == 0:
             continue
 
-        stream_path = os.path.join(_STREAMS_DIR, f"{gid}.json")
+        stream_path = os.path.join(_streams_dir, f"{gid}.json")
 
         # Nouvelle activité → ajout à l'index
         if gid not in known_ids:
@@ -306,15 +332,15 @@ def sync_all(max_activities: int = 1000, force_streams: bool = False) -> None:
         time.sleep(0.5)
 
     # Sauvegarde index
-    _save_index(index)
+    _save_index_to(_index_path, _garmin_dir, index)
 
     # Mise à jour sync_state.json
     n_streams_total = sum(1 for e in index.values() if e.get("stream_fetched") and e.get("has_gps"))
-    state = _load_sync_state()
+    state = _load_sync_state_from(_sync_state)
     state["garmin_activities_total"] = len(index)
     state["garmin_streams_synced"]   = n_streams_total
     state["garmin_last_sync"]        = datetime.now(timezone.utc).isoformat()
-    _save_sync_state(state)
+    _save_sync_state_to(_sync_state, state)
 
     elapsed = time.time() - t_start
     print(f"""

@@ -1,5 +1,5 @@
 """
-api/routes/sync.py — Synchronisation incrémentale intelligente.
+api/routes/sync.py — Synchronisation incrémentale intelligente (multi-user).
 
 POST /api/sync       → lance le pipeline en background, retourne 202
 GET  /api/sync/status → état courant enrichi (pipeline_status par étape)
@@ -7,21 +7,12 @@ GET  /api/sync/status → état courant enrichi (pipeline_status par étape)
 Le pipeline ne relance que les étapes nécessaires en comparant
 sync_state.json avant/après chaque step.
 
-── Clés canoniques de sync_state.json ──────────────────────────────────────────
-
-Chaque script écrit uniquement ses propres clés :
-
-  RecupDataStrava.py  → strava_last_sync, strava_activities_total
-  get_streams.py      → streams_last_sync, streams_synced_count
-  sync_garmin.py      → garmin_last_sync, garmin_activities_total, garmin_streams_synced
-  sync_strava_gps.py  → strava_gps_last_sync, strava_gps_synced
-  run_analysis.py     → analysis_last_run, analysis_activities_count
-  run_gps_analysis.py → (pas de clé, écrit dans data/garmin/metrics/)
-  sync.py (pipeline)  → matching_last_run, pipeline_last_full_run, pipeline_last_duration_s
+Toutes les données sont lues et écrites dans data/users/{user_id}/.
 """
 
 import json
 import io
+import logging
 import os
 import sys
 import threading
@@ -30,7 +21,14 @@ from contextlib import redirect_stdout
 from datetime import datetime, timezone
 
 import pandas as pd
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from api.dependencies import get_current_user
+from api.user_data import UserPaths, get_user_paths
+from api.auth import get_garmin_credentials, get_user_profile
+from api.strava_oauth import get_valid_access_token
+
+logger = logging.getLogger("coachagent.sync")
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -38,51 +36,85 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 sys.path.insert(0, os.path.join(_ROOT, "appelAPIs"))
 sys.path.insert(0, os.path.join(_ROOT, "analyse"))
 
-_SYNC_STATE = os.path.join(_ROOT, "data", "sync_state.json")
-_GARMIN_INDEX = os.path.join(_ROOT, "data", "garmin", "activities.json")
-_GARMIN_STREAMS = os.path.join(_ROOT, "data", "garmin", "streams")
-_STRAVA_CSV = os.path.join(_ROOT, "data", "mes_activites_strava.csv")
-_GPS_DIR = os.path.join(_ROOT, "data", "gps")
-_GARMIN_MAP = os.path.join(_ROOT, "data", "garmin", "strava_garmin_map.json")
-_CONFIG_PATH = os.path.join(_ROOT, "config.json")
-
 router = APIRouter(prefix="/api", tags=["sync"])
 
-# ── État interne du sync ──────────────────────────────────────────────────────
+# ── État interne du sync (per-user) ─────────────────────────────────────────
 
-_sync_lock = threading.Lock()
-_sync_state = {
-    "status": "idle",       # idle | running | error
-    "started_at": None,
-    "finished_at": None,
-    "result": None,
-    "error": None,
-    "steps_done": [],
-}
+_sync_locks: dict[str, threading.Lock] = {}   # user_id → Lock
+_sync_states: dict[str, dict] = {}            # user_id → state dict
+_active_threads: list[threading.Thread] = []  # for graceful shutdown
+_threads_lock = threading.Lock()
 
 
-# ── Lecture/écriture sync_state.json ─────────────────────────────────────────
+def _start_sync_thread(target, name: str = "sync") -> threading.Thread:
+    """Start a non-daemon sync thread and track it for graceful shutdown."""
+    thread = threading.Thread(target=target, name=name, daemon=False)
+    with _threads_lock:
+        # Prune finished threads
+        _active_threads[:] = [t for t in _active_threads if t.is_alive()]
+        _active_threads.append(thread)
+    thread.start()
+    return thread
 
-def _load_file_state() -> dict:
-    if os.path.exists(_SYNC_STATE):
+
+def wait_for_sync_threads(timeout: float = 30.0):
+    """Wait for all active sync threads to finish. Called during shutdown."""
+    with _threads_lock:
+        threads = list(_active_threads)
+    if not threads:
+        return
+    logger.info("Waiting for %d sync thread(s) to finish (timeout=%ds)...", len(threads), timeout)
+    deadline = time.time() + timeout
+    for t in threads:
+        remaining = max(0, deadline - time.time())
+        t.join(timeout=remaining)
+        if t.is_alive():
+            logger.warning("Sync thread %s did not finish within timeout", t.name)
+
+def _get_sync_lock(user_id: str) -> threading.Lock:
+    if user_id not in _sync_locks:
+        _sync_locks[user_id] = threading.Lock()
+    return _sync_locks[user_id]
+
+def _get_sync_state(user_id: str) -> dict:
+    if user_id not in _sync_states:
+        _sync_states[user_id] = {
+            "status": "idle",
+            "started_at": None,
+            "finished_at": None,
+            "result": None,
+            "error": None,
+            "steps_done": [],
+            "user_id": user_id,
+        }
+    return _sync_states[user_id]
+
+
+# ── Lecture/écriture sync_state.json (user-scoped) ──────────────────────────
+
+def _load_file_state(paths: UserPaths) -> dict:
+    p = paths.sync_state_json
+    if os.path.exists(p):
         try:
-            with open(_SYNC_STATE, encoding="utf-8") as f:
+            with open(p, encoding="utf-8") as f:
                 return json.load(f)
         except (json.JSONDecodeError, OSError):
             pass
     return {}
 
 
-def _save_file_state(state: dict) -> None:
-    os.makedirs(os.path.dirname(_SYNC_STATE), exist_ok=True)
-    with open(_SYNC_STATE, "w", encoding="utf-8") as f:
+def _save_file_state(paths: UserPaths, state: dict) -> None:
+    p = paths.sync_state_json
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2, ensure_ascii=False)
 
 
-def _load_config() -> dict:
-    if os.path.exists(_CONFIG_PATH):
+def _load_config(paths: UserPaths) -> dict:
+    p = paths.config_json
+    if os.path.exists(p):
         try:
-            with open(_CONFIG_PATH, encoding="utf-8") as f:
+            with open(p, encoding="utf-8") as f:
                 return json.load(f)
         except (json.JSONDecodeError, OSError):
             pass
@@ -90,7 +122,6 @@ def _load_config() -> dict:
 
 
 def _sync_age_minutes(state: dict, key: str) -> float | None:
-    """Retourne l'âge en minutes d'un timestamp dans sync_state, ou None si absent."""
     ts = state.get(key)
     if not ts:
         return None
@@ -101,21 +132,60 @@ def _sync_age_minutes(state: dict, key: str) -> float | None:
         return None
 
 
-def _count_csv_rows() -> int:
-    """Compte le nombre réel d'activités dans le CSV Strava."""
-    if not os.path.exists(_STRAVA_CSV):
+def _count_csv_rows(paths: UserPaths) -> int:
+    p = paths.strava_csv
+    if not os.path.exists(p):
         return 0
     try:
-        df = pd.read_csv(_STRAVA_CSV)
+        df = pd.read_csv(p)
         return len(df)
     except Exception:
         return 0
 
 
+# ── Génération CSV depuis Garmin (fallback sans Strava) ──────────────────────
+
+def _generate_csv_from_garmin(garmin_index_path: str, csv_path: str):
+    """
+    Génère un CSV d'activités au format Strava depuis l'index Garmin.
+    Utilisé quand l'utilisateur n'a pas connecté Strava mais a Garmin.
+    """
+    with open(garmin_index_path, encoding="utf-8") as f:
+        garmin_acts = json.load(f)
+
+    if not garmin_acts:
+        return
+
+    rows = []
+    for act in garmin_acts:
+        distance_km = act.get("distance_m", 0) / 1000
+        duration_min = act.get("duration_s", 0) / 60
+        pace = duration_min / distance_km if distance_km > 0 else None
+
+        rows.append({
+            "ID": act.get("garmin_id"),
+            "Nom": act.get("name", ""),
+            "Date": act.get("start_time_utc", ""),
+            "Distance (km)": round(distance_km, 2),
+            "Temps (min)": round(duration_min, 1),
+            "Allure (min/km)": round(pace, 2) if pace else None,
+            "Dénivelé (m)": act.get("elevation_gain_m", 0),
+            "Fréquence cardiaque (bpm)": act.get("avg_hr"),
+            "Type": act.get("sport_type", ""),
+            "Commentaire": "",
+        })
+
+    df = pd.DataFrame(rows)
+    df["Date"] = pd.to_datetime(df["Date"], format="mixed", utc=True)
+    df = df.sort_values("Date", ascending=True)
+    os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+    df.to_csv(csv_path, index=False, encoding="utf-8-sig")
+    print(f"[sync] Généré CSV depuis Garmin : {len(df)} activités → {csv_path}")
+
+
 # ── Logique de décision ──────────────────────────────────────────────────────
 
 def _needs_garmin_sync(state: dict, interval_min: float) -> tuple[bool, str]:
-    """Garmin sync nécessaire ?"""
     age = _sync_age_minutes(state, "garmin_last_sync")
     if age is None:
         return True, "jamais synchronisé"
@@ -124,17 +194,13 @@ def _needs_garmin_sync(state: dict, interval_min: float) -> tuple[bool, str]:
     return False, "à jour"
 
 
-def _needs_strava_sync(state: dict, interval_min: float) -> tuple[bool, str]:
-    """Strava sync nécessaire ?"""
-    # Lire la clé canonique écrite par RecupDataStrava.py
+def _needs_strava_sync(state: dict, interval_min: float, paths: UserPaths) -> tuple[bool, str]:
     age = _sync_age_minutes(state, "strava_last_sync")
     if age is None:
         return True, "jamais synchronisé"
     if age > interval_min:
         return True, f"dernière sync il y a {age:.0f} min (seuil {interval_min:.0f})"
-    # Vérification de cohérence : le CSV peut avoir plus de lignes que ce qui est
-    # enregistré dans sync_state (ajouts manuels, sync externe, etc.)
-    csv_count = _count_csv_rows()
+    csv_count = _count_csv_rows(paths)
     state_count = state.get("strava_activities_total", 0)
     if csv_count > state_count:
         return True, f"CSV a {csv_count} lignes vs {state_count} dans sync_state"
@@ -142,7 +208,6 @@ def _needs_strava_sync(state: dict, interval_min: float) -> tuple[bool, str]:
 
 
 def _needs_matching(state: dict, prev_strava_total: int, prev_garmin_total: int) -> tuple[bool, str]:
-    """Matching nécessaire seulement si le nombre d'activités a changé."""
     strava_total = state.get("strava_activities_total", 0)
     garmin_total = state.get("garmin_activities_total", 0)
     if strava_total != prev_strava_total:
@@ -154,9 +219,49 @@ def _needs_matching(state: dict, prev_strava_total: int, prev_garmin_total: int)
     return False, "aucun changement"
 
 
-def _needs_strava_gps(state: dict) -> tuple[bool, str]:
-    """GPS Strava nécessaire si des activités n'ont ni Garmin ni Strava GPS."""
+def _needs_strava_gps(state: dict, paths: UserPaths | None = None) -> tuple[bool, str]:
     total = state.get("strava_activities_total", 0)
+    if total == 0:
+        return False, "aucune activité"
+
+    # Count actual GPS files on disk instead of relying on counters
+    # (counters can double-count activities covered by both Garmin and Strava)
+    if paths is not None:
+        try:
+            strava_csv = paths.strava_csv
+            if os.path.exists(strava_csv):
+                df = pd.read_csv(strava_csv)
+                all_ids = df["ID"].astype(int).tolist()
+
+                garmin_map = {}
+                if os.path.exists(paths.garmin_map_json):
+                    with open(paths.garmin_map_json, encoding="utf-8") as f:
+                        garmin_map = json.load(f)
+
+                missing = 0
+                for sid in all_ids:
+                    has_garmin = False
+                    garmin_id = garmin_map.get(str(sid))
+                    if garmin_id:
+                        has_garmin = os.path.exists(
+                            os.path.join(paths.garmin_streams_dir, f"{garmin_id}.json")
+                        )
+                    has_matched = os.path.exists(
+                        os.path.join(paths.gps_dir, f"{sid}.json")
+                    )
+                    has_strava = os.path.exists(
+                        os.path.join(paths.gps_dir, f"strava_{sid}.json")
+                    )
+                    if not has_garmin and not has_matched and not has_strava:
+                        missing += 1
+
+                if missing > 0:
+                    return True, f"{missing} activités sans GPS"
+                return False, "toutes couvertes"
+        except Exception:
+            pass
+
+    # Fallback to counter-based check
     garmin_streams = state.get("garmin_streams_synced", 0)
     strava_gps = state.get("strava_gps_synced", 0)
     covered = garmin_streams + strava_gps
@@ -166,10 +271,8 @@ def _needs_strava_gps(state: dict) -> tuple[bool, str]:
     return False, "toutes couvertes"
 
 
-def _needs_analysis(state: dict) -> tuple[bool, str]:
-    """Analyse nécessaire si nouvelles activités non encore analysées."""
-    # Comparer avec le nombre réel de lignes du CSV, pas sync_state
-    csv_count = _count_csv_rows()
+def _needs_analysis(state: dict, paths: UserPaths) -> tuple[bool, str]:
+    csv_count = _count_csv_rows(paths)
     analysis_count = state.get("analysis_activities_count", 0)
     if csv_count > analysis_count:
         return True, f"{csv_count - analysis_count} nouvelles activités (CSV={csv_count}, analysées={analysis_count})"
@@ -178,26 +281,26 @@ def _needs_analysis(state: dict) -> tuple[bool, str]:
     return False, "à jour"
 
 
-# ── Matching local Garmin ↔ Strava ────────────────────────────────────────────
+# ── Matching local Garmin ↔ Strava (user-scoped) ────────────────────────────
 
-def match_strava_garmin() -> dict:
+def match_strava_garmin(paths: UserPaths) -> dict:
     """
     Match Garmin → Strava en mémoire (aucun appel API).
-
-    Critères : date ±4h, durée ±120s, distance ±200m.
-    Écrit data/gps/{strava_id}.json pour chaque match trouvé.
-    Met à jour data/garmin/strava_garmin_map.json.
-
-    Retourne {"matched": int, "already_matched": int, "unmatched_garmin": int}.
+    Toutes les données sont lues/écrites dans les chemins de l'utilisateur.
     """
-    # Charger les index
-    if not os.path.exists(_GARMIN_INDEX) or not os.path.exists(_STRAVA_CSV):
+    garmin_index = paths.garmin_activities_json
+    strava_csv = paths.strava_csv
+    garmin_streams = paths.garmin_streams_dir
+    gps_dir = paths.gps_dir
+    garmin_map_path = paths.garmin_map_json
+
+    if not os.path.exists(garmin_index) or not os.path.exists(strava_csv):
         return {"matched": 0, "already_matched": 0, "unmatched_garmin": 0}
 
-    with open(_GARMIN_INDEX, encoding="utf-8") as f:
+    with open(garmin_index, encoding="utf-8") as f:
         garmin_acts = json.load(f)
 
-    strava_df = pd.read_csv(_STRAVA_CSV)
+    strava_df = pd.read_csv(strava_csv)
     if strava_df.empty:
         return {"matched": 0, "already_matched": 0, "unmatched_garmin": 0}
 
@@ -205,23 +308,21 @@ def match_strava_garmin() -> dict:
     strava_df["_dur_s"] = strava_df["Temps (min)"].astype(float) * 60.0
     strava_df["_dist_m"] = strava_df["Distance (km)"].astype(float) * 1000.0
 
-    # Charger le map existant
     garmin_map = {}
-    if os.path.exists(_GARMIN_MAP):
-        with open(_GARMIN_MAP, encoding="utf-8") as f:
+    if os.path.exists(garmin_map_path):
+        with open(garmin_map_path, encoding="utf-8") as f:
             garmin_map = json.load(f)
 
-    # IDs Strava déjà matchés (fichiers GPS existants)
     existing_gps = set()
-    if os.path.exists(_GPS_DIR):
-        for fname in os.listdir(_GPS_DIR):
+    if os.path.exists(gps_dir):
+        for fname in os.listdir(gps_dir):
             stem, ext = os.path.splitext(fname)
             if ext == ".json" and stem.isdigit():
                 existing_gps.add(int(stem))
 
     matched = 0
     already_matched = 0
-    os.makedirs(_GPS_DIR, exist_ok=True)
+    os.makedirs(gps_dir, exist_ok=True)
 
     used_strava_ids = set(existing_gps)
 
@@ -230,7 +331,7 @@ def match_strava_garmin() -> dict:
         if gid == 0:
             continue
 
-        stream_path = os.path.join(_GARMIN_STREAMS, f"{gid}.json")
+        stream_path = os.path.join(garmin_streams, f"{gid}.json")
         if not os.path.exists(stream_path):
             continue
 
@@ -280,7 +381,7 @@ def match_strava_garmin() -> dict:
             "garmin_id": gid,
             "points": stream_data.get("points", []),
         }
-        gps_path = os.path.join(_GPS_DIR, f"{best_strava_id}.json")
+        gps_path = os.path.join(gps_dir, f"{best_strava_id}.json")
         with open(gps_path, "w", encoding="utf-8") as f:
             json.dump(gps_data, f, indent=2, ensure_ascii=False)
 
@@ -288,35 +389,48 @@ def match_strava_garmin() -> dict:
         used_strava_ids.add(best_strava_id)
         matched += 1
 
-    os.makedirs(os.path.dirname(_GARMIN_MAP), exist_ok=True)
-    with open(_GARMIN_MAP, "w", encoding="utf-8") as f:
+    os.makedirs(os.path.dirname(garmin_map_path), exist_ok=True)
+    with open(garmin_map_path, "w", encoding="utf-8") as f:
         json.dump(garmin_map, f, indent=2, ensure_ascii=False)
 
     unmatched = sum(
         1 for g in garmin_acts
         if int(g.get("garmin_id", 0)) != 0
-        and os.path.exists(os.path.join(_GARMIN_STREAMS, f"{int(g['garmin_id'])}.json"))
+        and os.path.exists(os.path.join(garmin_streams, f"{int(g['garmin_id'])}.json"))
         and str(int(g["garmin_id"])) not in {str(v) for v in garmin_map.values()}
     )
 
-    file_state = _load_file_state()
+    file_state = _load_file_state(paths)
     file_state["matching_last_run"] = datetime.now(timezone.utc).isoformat()
-    _save_file_state(file_state)
+    _save_file_state(paths, file_state)
 
     return {"matched": matched, "already_matched": already_matched, "unmatched_garmin": unmatched}
 
 
-# ── Pipeline sync incrémental ────────────────────────────────────────────────
+# ── Pipeline sync incrémental (user-scoped) ─────────────────────────────────
 
-def _run_pipeline():
+def _run_pipeline(user_id: str):
     """Exécute le pipeline en background — ne relance que les étapes nécessaires."""
-    global _sync_state
-    _sync_state["status"] = "running"
-    _sync_state["started_at"] = datetime.now(timezone.utc).isoformat()
-    _sync_state["finished_at"] = None
-    _sync_state["result"] = None
-    _sync_state["error"] = None
-    _sync_state["steps_done"] = []
+    ss = _get_sync_state(user_id)
+
+    paths = get_user_paths(user_id)
+    data_dir = paths.base
+
+    # Per-user credentials
+    access_token = get_valid_access_token(user_id)  # str or None
+    garmin_creds = get_garmin_credentials(user_id)   # dict or None
+
+    if access_token:
+        print(f"[sync:{user_id}] Strava token OK (via OAuth)")
+    else:
+        print(f"[sync:{user_id}] WARNING: No valid Strava token — Strava steps will be skipped")
+
+    ss["status"] = "running"
+    ss["started_at"] = datetime.now(timezone.utc).isoformat()
+    ss["finished_at"] = None
+    ss["result"] = None
+    ss["error"] = None
+    ss["steps_done"] = []
 
     result = {
         "new_activities": 0,
@@ -330,260 +444,340 @@ def _run_pipeline():
     t_start = time.time()
     buf = io.StringIO()
 
-    config = _load_config()
+    config = _load_config(paths)
     interval_min = config.get("auto_sync_interval_minutes", 30)
 
     try:
-        # Snapshot de l'état avant le pipeline
-        state_before = _load_file_state()
+        state_before = _load_file_state(paths)
         prev_strava_total = state_before.get("strava_activities_total", 0)
         prev_garmin_total = state_before.get("garmin_activities_total", 0)
 
-        # ── Étape 1 : Garmin sync (source GPS principale) ────────────────
-        need, reason = _needs_garmin_sync(state_before, interval_min)
-        if need:
-            try:
-                from sync_garmin import sync_all
-                with redirect_stdout(buf):
-                    sync_all()
-                _sync_state["steps_done"].append("garmin")
-                result["steps_run"].append("garmin")
-                from api.deps import invalidate_cache
-                invalidate_cache(["gps"])
-            except SystemExit:
-                _sync_state["steps_done"].append("garmin:auth_failed")
-                result["steps_run"].append("garmin")
-            except Exception as e:
-                _sync_state["steps_done"].append(f"garmin:error:{e}")
-                result["steps_run"].append("garmin")
+        # ── Étape 1 : Garmin sync ────────────────────────────────────────
+        if not garmin_creds and not os.path.isdir(paths.garth_dir):
+            result["steps_skipped"].append({"step": "garmin", "reason": "pas de credentials Garmin configurées"})
         else:
-            result["steps_skipped"].append({"step": "garmin", "reason": reason})
+            need, reason = _needs_garmin_sync(state_before, interval_min)
+            if need:
+                try:
+                    from sync_garmin import sync_all
+                    with redirect_stdout(buf):
+                        sync_all(data_dir=data_dir, garth_dir=paths.garth_dir,
+                                 garmin_creds=garmin_creds)
+                    ss["steps_done"].append("garmin")
+                    result["steps_run"].append("garmin")
+                    from api.deps import invalidate_cache
+                    invalidate_cache(["gps"], user_id=user_id)
+                except SystemExit:
+                    ss["steps_done"].append("garmin:auth_failed")
+                    result["steps_run"].append("garmin")
+                except Exception as e:
+                    ss["steps_done"].append(f"garmin:error:{e}")
+                    result["steps_run"].append("garmin")
+            else:
+                result["steps_skipped"].append({"step": "garmin", "reason": reason})
 
-        # Recharger l'état (garmin sync l'a peut-être mis à jour)
-        state_after_garmin = _load_file_state()
+        state_after_garmin = _load_file_state(paths)
 
-        # ── Étape 2 : Matching Garmin → Strava ───────────────────────────
+        # ── Étape 2 : Matching Garmin → Strava ──────────────────────────
         need, reason = _needs_matching(state_after_garmin, prev_strava_total, prev_garmin_total)
         if need:
             try:
-                match_result = match_strava_garmin()
+                match_result = match_strava_garmin(paths)
                 result["new_gps_matches"] = match_result["matched"]
-                _sync_state["steps_done"].append("matching")
+                ss["steps_done"].append("matching")
                 result["steps_run"].append("matching")
                 from api.deps import invalidate_cache
-                invalidate_cache(["gps"])
+                invalidate_cache(["gps"], user_id=user_id)
             except Exception as e:
-                _sync_state["steps_done"].append(f"matching:error:{e}")
+                ss["steps_done"].append(f"matching:error:{e}")
                 result["steps_run"].append("matching")
         else:
             result["steps_skipped"].append({"step": "matching", "reason": reason})
 
-        # ── Étape 3 : Strava activités (métadonnées) ─────────────────────
-        need, reason = _needs_strava_sync(state_before, interval_min)
-        if need:
-            try:
-                from RecupDataStrava import sync_activities
-                with redirect_stdout(buf):
-                    n_new = sync_activities()
-                result["new_activities"] = n_new or 0
-                _sync_state["steps_done"].append("strava")
-                result["steps_run"].append("strava")
-                if n_new:
+        # ── Étape 2b : Générer CSV depuis Garmin si pas de Strava ET pas de CSV existant
+        if not access_token:
+            garmin_index = paths.garmin_activities_json
+            csv_exists = os.path.exists(paths.strava_csv) and os.path.getsize(paths.strava_csv) > 100
+            if os.path.exists(garmin_index) and not csv_exists:
+                try:
+                    _generate_csv_from_garmin(garmin_index, paths.strava_csv)
+                    ss["steps_done"].append("garmin_to_csv")
+                    result["steps_run"].append("garmin_to_csv")
                     from api.deps import invalidate_cache
-                    invalidate_cache(["activities"])
-            except Exception as e:
-                _sync_state["steps_done"].append(f"strava:error:{e}")
-                result["steps_run"].append("strava")
+                    invalidate_cache(["activities"], user_id=user_id)
+                except Exception as e:
+                    ss["steps_done"].append(f"garmin_to_csv:error:{e}")
+            elif csv_exists:
+                result["steps_skipped"].append({"step": "garmin_to_csv", "reason": "CSV déjà existant (ne pas écraser les données Strava)"})
+
+        # ── Étape 3 : Strava activités ───────────────────────────────────
+        if not access_token:
+            result["steps_skipped"].append({"step": "strava", "reason": "pas de token Strava (connecter Strava dans Settings)"})
         else:
-            result["steps_skipped"].append({"step": "strava", "reason": reason})
+            need, reason = _needs_strava_sync(state_before, interval_min, paths)
+            if need:
+                try:
+                    from RecupDataStrava import sync_activities
+                    with redirect_stdout(buf):
+                        n_new = sync_activities(data_dir=data_dir, access_token=access_token)
+                    result["new_activities"] = n_new or 0
+                    ss["steps_done"].append("strava")
+                    result["steps_run"].append("strava")
+                    if n_new:
+                        from api.deps import invalidate_cache
+                        invalidate_cache(["activities"], user_id=user_id)
+                except Exception as e:
+                    ss["steps_done"].append(f"strava:error:{e}")
+                    result["steps_run"].append("strava")
+            else:
+                result["steps_skipped"].append({"step": "strava", "reason": reason})
 
         # ── Étape 4 : Strava streams (FC, allure) ────────────────────────
-        # Toujours exécuter — le script interne skip les activités déjà synced
-        try:
-            from get_streams import sync_all_streams
-            with redirect_stdout(buf):
-                sync_all_streams()
-            _sync_state["steps_done"].append("strava_streams")
-            result["steps_run"].append("strava_streams")
-        except Exception as e:
-            _sync_state["steps_done"].append(f"strava_streams:error:{e}")
-            result["steps_run"].append("strava_streams")
+        if not access_token:
+            result["steps_skipped"].append({"step": "strava_streams", "reason": "pas de token Strava"})
+        else:
+            try:
+                # Count streams before to detect new ones
+                streams_before = len([f for f in os.listdir(paths.streams_dir) if f.endswith('.csv')]) if os.path.isdir(paths.streams_dir) else 0
+                from get_streams import sync_all_streams
+                with redirect_stdout(buf):
+                    sync_all_streams(data_dir=data_dir, access_token=access_token)
+                streams_after = len([f for f in os.listdir(paths.streams_dir) if f.endswith('.csv')]) if os.path.isdir(paths.streams_dir) else 0
+                ss["steps_done"].append("strava_streams")
+                result["steps_run"].append("strava_streams")
+                result["new_streams"] = streams_after - streams_before
+                # Force re-analysis if new streams were fetched (zones FC need recomputation)
+                if streams_after > streams_before:
+                    file_state = _load_file_state(paths)
+                    file_state["analysis_activities_count"] = 0
+                    _save_file_state(paths, file_state)
+                    print(f"[sync:{user_id}] {streams_after - streams_before} new streams → forcing re-analysis")
+            except Exception as e:
+                ss["steps_done"].append(f"strava_streams:error:{e}")
+                result["steps_run"].append("strava_streams")
 
         # ── Étape 5 : Re-match si nouvelles activités Strava ─────────────
         if result["new_activities"] > 0:
             try:
-                match2 = match_strava_garmin()
+                match2 = match_strava_garmin(paths)
                 result["new_gps_matches"] += match2["matched"]
-                _sync_state["steps_done"].append("rematch")
+                ss["steps_done"].append("rematch")
                 result["steps_run"].append("rematch")
                 if match2["matched"] > 0:
                     from api.deps import invalidate_cache
-                    invalidate_cache(["gps"])
+                    invalidate_cache(["gps"], user_id=user_id)
             except Exception as e:
-                _sync_state["steps_done"].append(f"rematch:error:{e}")
+                ss["steps_done"].append(f"rematch:error:{e}")
 
-        # ── Étape 6 : GPS Strava fallback ─────────────────────────────────
-        state_now = _load_file_state()
-        need, reason = _needs_strava_gps(state_now)
-        if need:
-            try:
-                from sync_strava_gps import sync_all as sync_strava_gps_all
-                with redirect_stdout(buf):
-                    strava_gps_result = sync_strava_gps_all()
-                result["strava_gps_fetched"] = strava_gps_result.get("strava_fetched", 0)
-                _sync_state["steps_done"].append("strava_gps")
-                result["steps_run"].append("strava_gps")
-                if result["strava_gps_fetched"] > 0:
-                    from api.deps import invalidate_cache
-                    invalidate_cache(["gps"])
-            except Exception as e:
-                _sync_state["steps_done"].append(f"strava_gps:error:{e}")
-                result["steps_run"].append("strava_gps")
+        # ── Étape 6 : GPS Strava fallback ────────────────────────────────
+        if not access_token:
+            result["steps_skipped"].append({"step": "strava_gps", "reason": "pas de token Strava"})
         else:
-            result["steps_skipped"].append({"step": "strava_gps", "reason": reason})
+            state_now = _load_file_state(paths)
+            need, reason = _needs_strava_gps(state_now, paths)
+            if need:
+                try:
+                    from sync_strava_gps import sync_all as sync_strava_gps_all
+                    with redirect_stdout(buf):
+                        strava_gps_result = sync_strava_gps_all(data_dir=data_dir, access_token=access_token)
+                    result["strava_gps_fetched"] = strava_gps_result.get("strava_fetched", 0)
+                    ss["steps_done"].append("strava_gps")
+                    result["steps_run"].append("strava_gps")
+                    if result["strava_gps_fetched"] > 0:
+                        from api.deps import invalidate_cache
+                        invalidate_cache(["gps"], user_id=user_id)
+                except Exception as e:
+                    ss["steps_done"].append(f"strava_gps:error:{e}")
+                    result["steps_run"].append("strava_gps")
+            else:
+                result["steps_skipped"].append({"step": "strava_gps", "reason": reason})
 
-        # ── Étape 7 : Analyse GPS (métriques Garmin) ──────────────────────
+        # ── Étape 7 : Analyse GPS (métriques Garmin) ─────────────────────
         try:
             from run_gps_analysis import run_gps_analysis
             with redirect_stdout(buf):
-                run_gps_analysis()
-            _sync_state["steps_done"].append("gps_analysis")
+                run_gps_analysis(data_dir=data_dir)
+            ss["steps_done"].append("gps_analysis")
             result["steps_run"].append("gps_analysis")
         except Exception as e:
-            _sync_state["steps_done"].append(f"gps_analysis:error:{e}")
+            ss["steps_done"].append(f"gps_analysis:error:{e}")
             result["steps_run"].append("gps_analysis")
 
-        # ── Étape 8 : Analyse enrichie ────────────────────────────────────
-        state_now = _load_file_state()
-        need, reason = _needs_analysis(state_now)
+        # ── Étape 7b : Sync profil utilisateur → config.json ──────────
+        try:
+            config = _load_config(paths)
+            athlete = config.get("athlete", {})
+
+            user_profile = get_user_profile(user_id) or {}
+            if user_profile.get("hr_max"):
+                athlete["hr_max"] = user_profile["hr_max"]
+            if user_profile.get("hr_rest"):
+                athlete["hr_rest"] = user_profile["hr_rest"]
+            if user_profile.get("hr_threshold"):
+                athlete["hr_threshold"] = user_profile["hr_threshold"]
+            if user_profile.get("gender"):
+                athlete["sex"] = user_profile["gender"]
+
+            # Custom zones
+            custom_zones = []
+            for i in range(1, 6):
+                val = user_profile.get(f"hr_z{i}_max")
+                if val:
+                    custom_zones.append(val)
+            if len(custom_zones) == 5:
+                athlete["hr_zones_custom"] = custom_zones
+
+            config["athlete"] = athlete
+            os.makedirs(os.path.dirname(paths.config_json), exist_ok=True)
+            with open(paths.config_json, "w", encoding="utf-8") as f:
+                json.dump(config, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass  # Non-blocking
+
+        # ── Étape 8 : Analyse enrichie ───────────────────────────────────
+        state_now = _load_file_state(paths)
+        need, reason = _needs_analysis(state_now, paths)
         if need:
             try:
                 from run_analysis import run_analysis
                 with redirect_stdout(buf):
-                    run_analysis()
-                _sync_state["steps_done"].append("analysis")
+                    run_analysis(data_dir=data_dir, config_path=paths.config_json)
+                ss["steps_done"].append("analysis")
                 result["steps_run"].append("analysis")
                 from api.deps import invalidate_cache
-                invalidate_cache(["activities", "metrics"])
+                invalidate_cache(["activities", "metrics"], user_id=user_id)
             except SystemExit:
-                _sync_state["steps_done"].append("analysis:exit")
+                ss["steps_done"].append("analysis:exit")
                 result["steps_run"].append("analysis")
             except Exception as e:
-                _sync_state["steps_done"].append(f"analysis:error:{e}")
+                ss["steps_done"].append(f"analysis:error:{e}")
                 result["steps_run"].append("analysis")
         else:
             result["steps_skipped"].append({"step": "analysis", "reason": reason})
 
-        # ── Finalisation ──────────────────────────────────────────────────
+        # ── Finalisation ─────────────────────────────────────────────────
         result["duration_s"] = round(time.time() - t_start, 1)
 
-        file_state = _load_file_state()
+        file_state = _load_file_state(paths)
         file_state["pipeline_last_full_run"] = datetime.now(timezone.utc).isoformat()
         file_state["pipeline_last_duration_s"] = result["duration_s"]
-        _save_file_state(file_state)
+        _save_file_state(paths, file_state)
 
-        _sync_state["status"] = "idle"
-        _sync_state["result"] = result
+        ss["status"] = "idle"
+        ss["result"] = result
 
     except Exception as e:
-        _sync_state["status"] = "error"
-        _sync_state["error"] = str(e)
+        ss["status"] = "error"
+        ss["error"] = str(e)
         result["duration_s"] = round(time.time() - t_start, 1)
-        _sync_state["result"] = result
+        ss["result"] = result
 
     finally:
-        _sync_state["finished_at"] = datetime.now(timezone.utc).isoformat()
+        ss["finished_at"] = datetime.now(timezone.utc).isoformat()
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.post("/sync", status_code=202)
-def trigger_sync():
+def trigger_sync(user: dict = Depends(get_current_user)):
     """Lance le pipeline de synchronisation en background."""
-    if _sync_state["status"] == "running":
-        return {"status": "already_running", "started_at": _sync_state["started_at"]}
+    user_id = user["id"]
+    ss = _get_sync_state(user_id)
+    lock = _get_sync_lock(user_id)
 
-    if not _sync_lock.acquire(blocking=False):
-        return {"status": "already_running", "started_at": _sync_state["started_at"]}
+    if ss["status"] == "running":
+        return {"status": "already_running", "started_at": ss["started_at"]}
+
+    if not lock.acquire(blocking=False):
+        return {"status": "already_running", "started_at": ss["started_at"]}
 
     def _run():
         try:
-            _run_pipeline()
+            _run_pipeline(user_id)
         finally:
-            _sync_lock.release()
+            lock.release()
 
-    thread = threading.Thread(target=_run, daemon=True)
-    thread.start()
+    _start_sync_thread(_run, name=f"sync-{user_id}")
     return {"status": "running"}
 
 
 @router.post("/sync/backfill", status_code=202)
-def trigger_backfill(after_date: str = "2023-01-01"):
+def trigger_backfill(after_date: str = "2023-01-01", user: dict = Depends(get_current_user)):
     """Lance un backfill Strava pour récupérer les activités anciennes."""
-    if _sync_state["status"] == "running":
-        return {"status": "already_running", "started_at": _sync_state["started_at"]}
+    user_id = user["id"]
+    ss = _get_sync_state(user_id)
+    lock = _get_sync_lock(user_id)
 
-    if not _sync_lock.acquire(blocking=False):
-        return {"status": "already_running", "started_at": _sync_state["started_at"]}
+    if ss["status"] == "running":
+        return {"status": "already_running", "started_at": ss["started_at"]}
+
+    if not lock.acquire(blocking=False):
+        return {"status": "already_running", "started_at": ss["started_at"]}
+
+    paths = get_user_paths(user_id)
+    data_dir = paths.base
+    access_token = get_valid_access_token(user_id)
+
+    if not access_token:
+        lock.release()
+        return {"error": "Pas de token Strava valide — connecter Strava dans Settings"}
 
     def _run():
-        global _sync_state
-        _sync_state["status"] = "running"
-        _sync_state["started_at"] = datetime.now(timezone.utc).isoformat()
-        _sync_state["finished_at"] = None
-        _sync_state["result"] = None
-        _sync_state["error"] = None
-        _sync_state["steps_done"] = []
+        ss["status"] = "running"
+        ss["started_at"] = datetime.now(timezone.utc).isoformat()
+        ss["finished_at"] = None
+        ss["result"] = None
+        ss["error"] = None
+        ss["steps_done"] = []
         t_start = time.time()
 
         try:
             from RecupDataStrava import sync_backfill
-            n_new = sync_backfill(after_date=after_date)
-            _sync_state["steps_done"].append("backfill")
+            n_new = sync_backfill(after_date=after_date, data_dir=data_dir, access_token=access_token)
+            ss["steps_done"].append("backfill")
 
             if n_new:
                 from api.deps import invalidate_cache
-                invalidate_cache(["activities"])
+                invalidate_cache(["activities"], user_id=user_id)
 
-                # Relancer l'analyse sur les nouvelles activités
                 try:
                     from run_analysis import run_analysis
                     buf = io.StringIO()
                     with redirect_stdout(buf):
-                        run_analysis()
-                    _sync_state["steps_done"].append("analysis")
-                    invalidate_cache(["activities", "metrics"])
+                        run_analysis(data_dir=data_dir, config_path=paths.config_json)
+                    ss["steps_done"].append("analysis")
+                    invalidate_cache(["activities", "metrics"], user_id=user_id)
                 except Exception as e:
-                    _sync_state["steps_done"].append(f"analysis:error:{e}")
+                    ss["steps_done"].append(f"analysis:error:{e}")
 
             duration = round(time.time() - t_start, 1)
-            _sync_state["status"] = "idle"
-            _sync_state["result"] = {
+            ss["status"] = "idle"
+            ss["result"] = {
                 "new_activities": n_new,
                 "steps_run": ["backfill", "analysis"],
                 "duration_s": duration,
             }
         except Exception as e:
-            _sync_state["status"] = "error"
-            _sync_state["error"] = str(e)
-            _sync_state["result"] = {"duration_s": round(time.time() - t_start, 1)}
+            ss["status"] = "error"
+            ss["error"] = str(e)
+            ss["result"] = {"duration_s": round(time.time() - t_start, 1)}
         finally:
-            _sync_state["finished_at"] = datetime.now(timezone.utc).isoformat()
-            _sync_lock.release()
+            ss["finished_at"] = datetime.now(timezone.utc).isoformat()
+            lock.release()
 
-    thread = threading.Thread(target=_run, daemon=True)
-    thread.start()
+    _start_sync_thread(_run, name=f"backfill-{user_id}")
     return {"status": "running", "after_date": after_date}
 
 
 @router.get("/sync/status")
-def sync_status():
+def sync_status(user: dict = Depends(get_current_user)):
     """Retourne l'état courant enrichi de la synchronisation."""
-    file_state = _load_file_state()
-    config = _load_config()
+    paths = get_user_paths(user["id"])
+
+    file_state = _load_file_state(paths)
+    config = _load_config(paths)
     interval_min = config.get("auto_sync_interval_minutes", 30)
 
-    # Âge du dernier sync
     last_sync_ago_minutes = None
     last_sync = file_state.get("pipeline_last_full_run") or file_state.get("analysis_last_run")
     if last_sync:
@@ -594,16 +788,15 @@ def sync_status():
         except (ValueError, TypeError):
             pass
 
-    # Pipeline status par étape
     garmin_needs, garmin_reason = _needs_garmin_sync(file_state, interval_min)
-    strava_needs, strava_reason = _needs_strava_sync(file_state, interval_min)
+    strava_needs, strava_reason = _needs_strava_sync(file_state, interval_min, paths)
     matching_needs, matching_reason = _needs_matching(
         file_state,
         file_state.get("strava_activities_total", 0),
         file_state.get("garmin_activities_total", 0),
     )
-    gps_needs, gps_reason = _needs_strava_gps(file_state)
-    analysis_needs, analysis_reason = _needs_analysis(file_state)
+    gps_needs, gps_reason = _needs_strava_gps(file_state, paths)
+    analysis_needs, analysis_reason = _needs_analysis(file_state, paths)
 
     pipeline_status = {
         "garmin": {
@@ -633,55 +826,77 @@ def sync_status():
         },
     }
 
+    ss = _get_sync_state(user["id"])
     return {
-        "sync_in_progress": _sync_state["status"] == "running",
-        "status": _sync_state["status"],
+        "sync_in_progress": ss["status"] == "running",
+        "status": ss["status"],
         "last_sync": last_sync,
         "last_sync_ago_minutes": last_sync_ago_minutes,
         "activities_total": file_state.get("strava_activities_total"),
         "garmin_activities_total": file_state.get("garmin_activities_total"),
         "pipeline_status": pipeline_status,
-        "last_result": _sync_state["result"],
-        "last_error": _sync_state["error"],
-        "steps_done": _sync_state["steps_done"],
-        "started_at": _sync_state["started_at"],
-        "finished_at": _sync_state["finished_at"],
+        "last_result": ss["result"],
+        "last_error": ss["error"],
+        "steps_done": ss["steps_done"],
+        "started_at": ss["started_at"],
+        "finished_at": ss["finished_at"],
     }
 
 
 # ── Auto-sync au démarrage ────────────────────────────────────────────────────
 
+def _get_all_user_ids() -> list[str]:
+    """Return all user IDs that have a data directory."""
+    from api.user_data import _USERS_DIR
+    if not os.path.isdir(_USERS_DIR):
+        return []
+    return [
+        name for name in os.listdir(_USERS_DIR)
+        if os.path.isdir(os.path.join(_USERS_DIR, name))
+    ]
+
+
 def maybe_auto_sync(config: dict) -> bool:
     """
-    Vérifie si un sync automatique est nécessaire (dernier sync > seuil).
-    Si oui, lance le sync en background et retourne True.
+    Vérifie si un sync automatique est nécessaire pour chaque utilisateur
+    (dernier sync > seuil). Lance le sync en background pour ceux qui en ont besoin.
+    Retourne True si au moins un sync a été lancé.
     """
     interval = config.get("auto_sync_interval_minutes", 30)
     if interval <= 0:
         return False
 
-    file_state = _load_file_state()
-    last = file_state.get("pipeline_last_full_run") or file_state.get("analysis_last_run")
-    if last:
-        try:
-            last_dt = datetime.fromisoformat(last)
-            age_min = (datetime.now(timezone.utc) - last_dt).total_seconds() / 60
-            if age_min < interval:
-                return False
-        except (ValueError, TypeError):
-            pass
+    launched_any = False
+    for user_id in _get_all_user_ids():
+        paths = UserPaths(user_id)
+        if not paths.exists():
+            continue
 
-    if _sync_state["status"] == "running":
-        return False
-    if not _sync_lock.acquire(blocking=False):
-        return False
+        file_state = _load_file_state(paths)
+        last = file_state.get("pipeline_last_full_run") or file_state.get("analysis_last_run")
+        if last:
+            try:
+                last_dt = datetime.fromisoformat(last)
+                age_min = (datetime.now(timezone.utc) - last_dt).total_seconds() / 60
+                if age_min < interval:
+                    continue
+            except (ValueError, TypeError):
+                pass
 
-    def _run():
-        try:
-            _run_pipeline()
-        finally:
-            _sync_lock.release()
+        ss = _get_sync_state(user_id)
+        lock = _get_sync_lock(user_id)
+        if ss["status"] == "running":
+            continue
+        if not lock.acquire(blocking=False):
+            continue
 
-    thread = threading.Thread(target=_run, daemon=True)
-    thread.start()
-    return True
+        def _run(uid=user_id, lk=lock):
+            try:
+                _run_pipeline(uid)
+            finally:
+                lk.release()
+
+        _start_sync_thread(_run, name=f"autosync-{user_id}")
+        launched_any = True
+
+    return launched_any

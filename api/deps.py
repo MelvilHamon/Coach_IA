@@ -3,34 +3,86 @@ api/deps.py — Chargement des données et dépendances partagées.
 
 Cache en mémoire avec invalidation par mtime du fichier source.
 Aucune logique métier — lecture de fichiers uniquement.
+
+Toutes les fonctions publiques acceptent un user_id pour résoudre
+les chemins via UserPaths. Sans user_id, les chemins legacy sont utilisés.
 """
 
 import json
 import os
 import sys
-from functools import lru_cache
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
+from api.user_data import UserPaths
+
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Chemins
-ENRICHED_CSV    = os.path.join(_ROOT, "data", "activities_enriched.csv")
-CONFIG_JSON     = os.path.join(_ROOT, "config.json")
-SYNC_STATE_JSON = os.path.join(_ROOT, "data", "sync_state.json")
-MEMOIRE_TXT     = os.path.join(_ROOT, "data", "memoire.txt")
-REVIEWS_DIR     = os.path.join(_ROOT, "data", "reviews")
-GPS_DIR         = os.path.join(_ROOT, "data", "gps")
-STREAMS_DIR     = os.path.join(_ROOT, "data", "streams")
-GARMIN_ACT_JSON = os.path.join(_ROOT, "data", "garmin", "activities.json")
-GARMIN_STREAMS  = os.path.join(_ROOT, "data", "garmin", "streams")
-GARMIN_METRICS  = os.path.join(_ROOT, "data", "garmin", "metrics")
-GARMIN_MAP_JSON = os.path.join(_ROOT, "data", "garmin", "strava_garmin_map.json")
+# ── Legacy paths (single-user fallback) ───────────────────────────────────────
+
+_LEGACY_ENRICHED    = os.path.join(_ROOT, "data", "activities_enriched.csv")
+_LEGACY_CONFIG      = os.path.join(_ROOT, "config.json")
+_LEGACY_SYNC_STATE  = os.path.join(_ROOT, "data", "sync_state.json")
+_LEGACY_MEMOIRE     = os.path.join(_ROOT, "data", "memoire.txt")
+_LEGACY_REVIEWS     = os.path.join(_ROOT, "data", "reviews")
+_LEGACY_GPS         = os.path.join(_ROOT, "data", "gps")
+_LEGACY_STREAMS     = os.path.join(_ROOT, "data", "streams")
+_LEGACY_GARMIN_ACT  = os.path.join(_ROOT, "data", "garmin", "activities.json")
+_LEGACY_GARMIN_STR  = os.path.join(_ROOT, "data", "garmin", "streams")
+_LEGACY_GARMIN_MET  = os.path.join(_ROOT, "data", "garmin", "metrics")
+_LEGACY_GARMIN_MAP  = os.path.join(_ROOT, "data", "garmin", "strava_garmin_map.json")
+
+# Public aliases kept for backward compat with sync.py imports
+ENRICHED_CSV    = _LEGACY_ENRICHED
+CONFIG_JSON     = _LEGACY_CONFIG
+SYNC_STATE_JSON = _LEGACY_SYNC_STATE
+MEMOIRE_TXT     = _LEGACY_MEMOIRE
+REVIEWS_DIR     = _LEGACY_REVIEWS
+GPS_DIR         = _LEGACY_GPS
+STREAMS_DIR     = _LEGACY_STREAMS
+GARMIN_ACT_JSON = _LEGACY_GARMIN_ACT
+GARMIN_STREAMS  = _LEGACY_GARMIN_STR
+GARMIN_METRICS  = _LEGACY_GARMIN_MET
+GARMIN_MAP_JSON = _LEGACY_GARMIN_MAP
 
 # Rend analyse/ importable
 sys.path.insert(0, os.path.join(_ROOT, "analyse"))
+
+
+# ── Path resolver ─────────────────────────────────────────────────────────────
+
+def _paths(user_id: str | None) -> dict:
+    """Return a dict of all paths, user-scoped or legacy."""
+    if user_id:
+        p = UserPaths(user_id)
+        return {
+            "enriched":     p.enriched_csv,
+            "config":       p.config_json,
+            "sync_state":   p.sync_state_json,
+            "memoire":      p.memoire_txt,
+            "reviews":      p.reviews_dir,
+            "gps":          p.gps_dir,
+            "streams":      p.streams_dir,
+            "garmin_act":   p.garmin_activities_json,
+            "garmin_str":   p.garmin_streams_dir,
+            "garmin_met":   p.garmin_metrics_dir,
+            "garmin_map":   p.garmin_map_json,
+        }
+    return {
+        "enriched":     _LEGACY_ENRICHED,
+        "config":       _LEGACY_CONFIG,
+        "sync_state":   _LEGACY_SYNC_STATE,
+        "memoire":      _LEGACY_MEMOIRE,
+        "reviews":      _LEGACY_REVIEWS,
+        "gps":          _LEGACY_GPS,
+        "streams":      _LEGACY_STREAMS,
+        "garmin_act":   _LEGACY_GARMIN_ACT,
+        "garmin_str":   _LEGACY_GARMIN_STR,
+        "garmin_met":   _LEGACY_GARMIN_MET,
+        "garmin_map":   _LEGACY_GARMIN_MAP,
+    }
 
 
 # ── Cache avec invalidation par mtime ────────────────────────────────────────
@@ -51,27 +103,21 @@ def _read_cached(path: str, loader) -> Any:
     return data
 
 
-# Mapping logique → fichiers cache pour invalidation ciblée
-_CACHE_GROUPS: dict[str, list[str]] = {
-    "activities": [ENRICHED_CSV, SYNC_STATE_JSON],
-    "metrics":    [ENRICHED_CSV],
-    "gps":        [GARMIN_MAP_JSON],
-    "config":     [CONFIG_JSON],
-}
-
-
-def invalidate_cache(keys: list[str]) -> None:
+def invalidate_cache(keys: list[str], user_id: str | None = None) -> None:
     """
     Invalide le cache mtime pour les groupes demandés.
-
-    Appelé par sync.py après chaque étape pour forcer le rechargement
-    au prochain appel API sans attendre un changement de mtime.
-
     keys: liste de groupes logiques ("activities", "metrics", "gps", "config").
     """
+    p = _paths(user_id)
+    groups = {
+        "activities": [p["enriched"], p["sync_state"]],
+        "metrics":    [p["enriched"]],
+        "gps":        [p["garmin_map"]],
+        "config":     [p["config"]],
+    }
     paths_to_clear = set()
     for key in keys:
-        for path in _CACHE_GROUPS.get(key, []):
+        for path in groups.get(key, []):
             paths_to_clear.add(path)
     for path in paths_to_clear:
         _cache.pop(path, None)
@@ -101,52 +147,57 @@ def _load_text(path: str) -> str:
 
 # ── API publique ─────────────────────────────────────────────────────────────
 
-def load_activities() -> pd.DataFrame:
-    df = _read_cached(ENRICHED_CSV, _load_csv)
+def load_activities(user_id: str | None = None) -> pd.DataFrame:
+    p = _paths(user_id)
+    df = _read_cached(p["enriched"], _load_csv)
     return df if df is not None else pd.DataFrame()
 
 
-def load_config() -> dict:
-    cfg = _read_cached(CONFIG_JSON, _load_json)
+def load_config(user_id: str | None = None) -> dict:
+    p = _paths(user_id)
+    cfg = _read_cached(p["config"], _load_json)
     return cfg if cfg is not None else {}
 
 
-def load_sync_state() -> dict:
-    st = _read_cached(SYNC_STATE_JSON, _load_json)
+def load_sync_state(user_id: str | None = None) -> dict:
+    p = _paths(user_id)
+    st = _read_cached(p["sync_state"], _load_json)
     return st if st is not None else {}
 
 
-def load_garmin_activities() -> list:
-    acts = _read_cached(GARMIN_ACT_JSON, _load_json)
+def load_garmin_activities(user_id: str | None = None) -> list:
+    p = _paths(user_id)
+    acts = _read_cached(p["garmin_act"], _load_json)
     return acts if acts is not None else []
 
 
-def get_review(activity_id: int) -> dict | None:
-    p = os.path.join(REVIEWS_DIR, f"{activity_id}.json")
-    if not os.path.exists(p):
+def get_review(activity_id: int, user_id: str | None = None) -> dict | None:
+    p = _paths(user_id)
+    path = os.path.join(p["reviews"], f"{activity_id}.json")
+    if not os.path.exists(path):
         return None
-    with open(p, encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         return json.load(f)
 
 
-def get_gps_points(activity_id: int) -> dict | None:
+def get_gps_points(activity_id: int, user_id: str | None = None) -> dict | None:
     """
     Cherche les points GPS dans cet ordre de priorité :
-    1. data/garmin/streams/{garmin_id}.json  ← via strava_garmin_map.json
-    2. data/gps/{activity_id}.json           ← matching Garmin existant
-    3. data/gps/strava_{activity_id}.json    ← fallback Strava
-    4. None                                  ← pas de GPS disponible
-
-    Normalise le format en sortie : {"points": [...], "source": "garmin"|"matched"|"strava"}.
+    1. garmin/streams/{garmin_id}.json  ← via strava_garmin_map.json
+    2. gps/{activity_id}.json           ← matching Garmin existant
+    3. gps/strava_{activity_id}.json    ← fallback Strava
+    4. None
     """
+    p = _paths(user_id)
+
     # 1. Via garmin map → stream Garmin direct
-    if os.path.exists(GARMIN_MAP_JSON):
+    if os.path.exists(p["garmin_map"]):
         try:
-            with open(GARMIN_MAP_JSON, encoding="utf-8") as f:
+            with open(p["garmin_map"], encoding="utf-8") as f:
                 garmin_map = json.load(f)
             garmin_id = garmin_map.get(str(activity_id))
             if garmin_id:
-                p1 = os.path.join(GARMIN_STREAMS, f"{garmin_id}.json")
+                p1 = os.path.join(p["garmin_str"], f"{garmin_id}.json")
                 if os.path.exists(p1):
                     with open(p1, encoding="utf-8") as f:
                         data = json.load(f)
@@ -155,16 +206,16 @@ def get_gps_points(activity_id: int) -> dict | None:
         except (json.JSONDecodeError, OSError):
             pass
 
-    # 2. Fichier GPS matché (data/gps/{activity_id}.json)
-    p2 = os.path.join(GPS_DIR, f"{activity_id}.json")
+    # 2. Fichier GPS matché
+    p2 = os.path.join(p["gps"], f"{activity_id}.json")
     if os.path.exists(p2):
         with open(p2, encoding="utf-8") as f:
             data = json.load(f)
         data.setdefault("source", "matched")
         return data
 
-    # 3. Fallback Strava (data/gps/strava_{activity_id}.json)
-    p3 = os.path.join(GPS_DIR, f"strava_{activity_id}.json")
+    # 3. Fallback Strava
+    p3 = os.path.join(p["gps"], f"strava_{activity_id}.json")
     if os.path.exists(p3):
         with open(p3, encoding="utf-8") as f:
             data = json.load(f)
@@ -174,19 +225,21 @@ def get_gps_points(activity_id: int) -> dict | None:
     return None
 
 
-def get_stream(activity_id: int) -> pd.DataFrame | None:
+def get_stream(activity_id: int, user_id: str | None = None) -> pd.DataFrame | None:
     """Charge le stream Strava (CSV) pour une activité."""
-    p = os.path.join(STREAMS_DIR, f"{activity_id}.csv")
-    if not os.path.exists(p):
+    p = _paths(user_id)
+    path = os.path.join(p["streams"], f"{activity_id}.csv")
+    if not os.path.exists(path):
         return None
-    return pd.read_csv(p)
+    return pd.read_csv(path)
 
 
-def get_garmin_metrics(garmin_id: int) -> dict | None:
-    p = os.path.join(GARMIN_METRICS, f"{garmin_id}.json")
-    if not os.path.exists(p):
+def get_garmin_metrics(garmin_id: int, user_id: str | None = None) -> dict | None:
+    p = _paths(user_id)
+    path = os.path.join(p["garmin_met"], f"{garmin_id}.json")
+    if not os.path.exists(path):
         return None
-    with open(p, encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         return json.load(f)
 
 

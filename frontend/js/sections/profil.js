@@ -5,29 +5,37 @@
 import { api } from '../api.js';
 import { el, sectionTitle, loading, empty, collapsible, fmt, fmtDate } from '../components.js';
 import { plotFitness, plotMonotony } from '../charts.js';
+import { getCurrentSport } from '../state.js';
 
 export async function renderProfil(container) {
   container.innerHTML = '';
   container.appendChild(loading());
 
+  const sport = getCurrentSport();
+
   try {
     const [recordsRes, fitnessRes, monotonyRes] = await Promise.all([
       api.records().catch(() => ({ distances: {} })),
-      api.chartFitness().catch(() => ({ points: [] })),
-      api.chartMonotony().catch(() => ({ points: [] })),
+      api.chartFitness(sport).catch(() => ({ points: [] })),
+      api.chartMonotony(sport).catch(() => ({ points: [] })),
     ]);
 
     container.innerHTML = '';
 
-    // ── Personal Records ──
+    // ── Personal Records (filtered by current sport) ──
+    const isVelo = sport === 'velo';
     const prSection = el('div', { className: 'ca-section' },
-      sectionTitle('Records personnels'),
+      sectionTitle(isVelo ? 'Records personnels — Vélo' : 'Records personnels — Course'),
       el('div', { className: 'ca-metric-explain', style: { marginBottom: '16px' } },
-        'Meilleurs temps détectés par sliding window sur les traces GPS. Distances standards de 400m au marathon.',
+        isVelo
+          ? 'Meilleurs temps détectés par sliding window sur les traces GPS. Distances de 1 km à 100 km.'
+          : 'Meilleurs temps détectés par sliding window sur les traces GPS. Distances standards de 400m au marathon.',
       ),
     );
 
-    const distances = recordsRes.distances || {};
+    // New format: { run: {...}, velo: {...} } — fallback for old format (flat dict)
+    const allDist = recordsRes.distances || {};
+    const distances = allDist[sport] || (allDist.run ? {} : allDist);
     const distKeys = Object.keys(distances);
 
     if (distKeys.length) {
@@ -36,7 +44,7 @@ export async function renderProfil(container) {
           el('tr', {},
             el('th', {}, 'Distance'),
             el('th', {}, 'Temps'),
-            el('th', {}, 'Allure'),
+            el('th', {}, isVelo ? 'Vitesse' : 'Allure'),
             el('th', {}, 'Date'),
           ),
         ),
@@ -46,10 +54,25 @@ export async function renderProfil(container) {
       for (const dist of distKeys) {
         const r = distances[dist];
         const timeStr = _formatTime(r.time_s);
+
+        // For cycling: show speed (km/h) instead of pace
+        let paceOrSpeed;
+        if (isVelo) {
+          const distM = _parseDistMeters(dist);
+          if (distM && r.time_s > 0) {
+            const speedKmh = (distM / 1000) / (r.time_s / 3600);
+            paceOrSpeed = fmt(speedKmh, 1) + ' km/h';
+          } else {
+            paceOrSpeed = r.pace + '/km';
+          }
+        } else {
+          paceOrSpeed = r.pace + '/km';
+        }
+
         tbody.appendChild(el('tr', {},
           el('td', {}, dist),
           el('td', { className: 'pr-time' }, timeStr),
-          el('td', { className: 'pr-pace' }, r.pace + '/km'),
+          el('td', { className: 'pr-pace' }, paceOrSpeed),
           el('td', {}, r.date ? fmtDate(r.date) : '—'),
         ));
       }
@@ -61,7 +84,7 @@ export async function renderProfil(container) {
 
     prSection.appendChild(collapsible('Méthode de calcul — Records personnels', () =>
       el('div', {},
-        el('p', {}, 'Pour chaque distance cible (400m, 1km, 1mi, 5km, 10km, semi, marathon), '
+        el('p', {}, 'Pour chaque distance cible, '
           + 'on parcourt la trace GPS avec une fenêtre glissante sur la distance cumulée (haversine).'),
         el('p', {}, 'Pour chaque point i, on cherche le premier point j tel que '
           + 'dist_cum[j] − dist_cum[i] ≥ distance_cible. Le temps écoulé time_s[j] − time_s[i] est le temps du segment.'),
@@ -161,4 +184,15 @@ function _formatTime(seconds) {
   const s = Math.round(seconds % 60);
   if (h > 0) return `${h}h${String(m).padStart(2, '0')}'${String(s).padStart(2, '0')}"`;
   return `${m}'${String(s).padStart(2, '0')}"`;
+}
+
+function _parseDistMeters(label) {
+  const m = label.match(/^(\d+)km$/);
+  if (m) return parseInt(m[1]) * 1000;
+  const m2 = label.match(/^(\d+)m$/);
+  if (m2) return parseInt(m2[1]);
+  if (label === '1mi') return 1609;
+  if (label === 'semi') return 21097;
+  if (label === 'marathon') return 42195;
+  return null;
 }

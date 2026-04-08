@@ -1,35 +1,20 @@
+"""
+RecupDataStrava.py — Sync incrémental des activités Strava.
+
+Toutes les fonctions acceptent un access_token pré-validé.
+Le refresh des tokens est géré en amont par api/strava_oauth.py.
+"""
+
 import os
 import json
 import time
 import requests
 import pandas as pd
 from datetime import datetime, timezone
-from dotenv import load_dotenv
-
-load_dotenv()
-CLIENT_ID = os.getenv("CLIENT_ID")
-CLIENT_SECRET = os.getenv("CLIENT_SECRET")
-REFRESH_TOKEN = os.getenv("REFRESH_TOKEN")
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 CSV_PATH = os.path.join(DATA_DIR, "mes_activites_strava.csv")
 SYNC_STATE_PATH = os.path.join(DATA_DIR, "sync_state.json")
-
-
-# ── Auth ──────────────────────────────────────────────────────────────────────
-
-def refresh_access_token():
-    response = requests.post(
-        url="https://www.strava.com/oauth/token",
-        data={
-            "client_id": CLIENT_ID,
-            "client_secret": CLIENT_SECRET,
-            "grant_type": "refresh_token",
-            "refresh_token": REFRESH_TOKEN,
-        },
-    )
-    response.raise_for_status()
-    return response.json()["access_token"]
 
 
 # ── Fetch activités ───────────────────────────────────────────────────────────
@@ -71,7 +56,7 @@ def get_all_new_activities(token, existing_ids, per_page=100):
             break
 
         page += 1
-        time.sleep(0.3)  # respecter le rate-limit Strava (100 req/15 min)
+        time.sleep(0.3)
 
     return all_new
 
@@ -79,7 +64,7 @@ def get_all_new_activities(token, existing_ids, per_page=100):
 def backfill_activities(token, existing_ids, after_date="2023-01-01", per_page=100):
     """
     Récupère TOUTES les activités depuis after_date, même celles plus anciennes
-    que les activités déjà connues. Utilise le paramètre 'after' de l'API Strava.
+    que les activités déjà connues.
     """
     after_epoch = int(datetime.strptime(after_date, "%Y-%m-%d")
                       .replace(tzinfo=timezone.utc).timestamp())
@@ -96,7 +81,7 @@ def backfill_activities(token, existing_ids, after_date="2023-01-01", per_page=1
         all_new.extend(new)
 
         if len(activities) < per_page:
-            break  # dernière page
+            break
 
         page += 1
         time.sleep(0.3)
@@ -140,104 +125,128 @@ def format_activities(activities, token):
             "Type": act.get("sport_type") or act.get("type", ""),
             "Commentaire": get_activity_description(act["id"], token),
         })
-        time.sleep(0.2)  # éviter le rate-limit sur les descriptions
+        time.sleep(0.2)
 
     return pd.DataFrame(rows)
 
 
 # ── Sync state ────────────────────────────────────────────────────────────────
 
-def load_sync_state():
-    if os.path.exists(SYNC_STATE_PATH):
-        with open(SYNC_STATE_PATH) as f:
+def _load_sync_state_from(path: str) -> dict:
+    if os.path.exists(path):
+        with open(path) as f:
             return json.load(f)
     return {}
 
 
-def save_sync_state(state):
-    with open(SYNC_STATE_PATH, "w") as f:
+def _save_sync_state_to(path: str, state: dict):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
         json.dump(state, f, indent=2, ensure_ascii=False)
 
 
-# ── Entrypoint ────────────────────────────────────────────────────────────────
+def load_sync_state():
+    return _load_sync_state_from(SYNC_STATE_PATH)
 
-def sync_activities():
-    token = refresh_access_token()
 
-    os.makedirs(DATA_DIR, exist_ok=True)
-    if os.path.exists(CSV_PATH):
-        df_old = pd.read_csv(CSV_PATH)
+def save_sync_state(state):
+    _save_sync_state_to(SYNC_STATE_PATH, state)
+
+
+# ── Entrypoints ──────────────────────────────────────────────────────────────
+
+def sync_activities(data_dir: str = None, access_token: str = None):
+    """
+    Sync incrémental des activités Strava.
+
+    Parameters
+    ----------
+    data_dir : répertoire de données utilisateur (défaut: module DATA_DIR)
+    access_token : token Strava valide (obligatoire)
+    """
+    if not access_token:
+        raise ValueError("access_token requis pour sync_activities")
+
+    _data_dir = data_dir or DATA_DIR
+    _csv_path = os.path.join(_data_dir, "mes_activites_strava.csv")
+    _sync_state_path = os.path.join(_data_dir, "sync_state.json")
+
+    os.makedirs(_data_dir, exist_ok=True)
+    if os.path.exists(_csv_path):
+        df_old = pd.read_csv(_csv_path)
         existing_ids = set(df_old["ID"].astype(int)) if "ID" in df_old.columns else set()
     else:
         df_old = pd.DataFrame()
         existing_ids = set()
 
     print(f"Activités connues : {len(existing_ids)}")
-    new_activities = get_all_new_activities(token, existing_ids)
+    new_activities = get_all_new_activities(access_token, existing_ids)
 
     if not new_activities:
         print("Aucune nouvelle activité.")
     else:
-        df_new = format_activities(new_activities, token)
+        df_new = format_activities(new_activities, access_token)
         df_combined = pd.concat([df_old, df_new], ignore_index=True)
         df_combined["Date"] = pd.to_datetime(df_combined["Date"], format="mixed", utc=True)
         df_combined = df_combined.sort_values("Date", ascending=True)
-        df_combined.to_csv(CSV_PATH, index=False, encoding="utf-8-sig")
-        print(f"{len(df_new)} nouvelles activités ajoutées → {CSV_PATH}")
+        df_combined.to_csv(_csv_path, index=False, encoding="utf-8-sig")
+        print(f"{len(df_new)} nouvelles activités ajoutées → {_csv_path}")
 
-    state = load_sync_state()
+    state = _load_sync_state_from(_sync_state_path)
     state["strava_last_sync"] = datetime.now(timezone.utc).isoformat()
     state["strava_activities_total"] = len(existing_ids) + len(new_activities if new_activities else [])
-    # Compat : garder les anciennes clés le temps de la transition
     state["activities_last_sync"] = state["strava_last_sync"]
     state["activities_total"] = state["strava_activities_total"]
-    save_sync_state(state)
+    _save_sync_state_to(_sync_state_path, state)
 
     return len(new_activities)
 
 
-def sync_backfill(after_date="2023-01-01"):
+def sync_backfill(after_date="2023-01-01", data_dir: str = None, access_token: str = None):
     """Récupère les activités historiques depuis after_date."""
-    token = refresh_access_token()
+    if not access_token:
+        raise ValueError("access_token requis pour sync_backfill")
 
-    os.makedirs(DATA_DIR, exist_ok=True)
-    if os.path.exists(CSV_PATH):
-        df_old = pd.read_csv(CSV_PATH)
+    _data_dir = data_dir or DATA_DIR
+    _csv_path = os.path.join(_data_dir, "mes_activites_strava.csv")
+    _sync_state_path = os.path.join(_data_dir, "sync_state.json")
+
+    os.makedirs(_data_dir, exist_ok=True)
+    if os.path.exists(_csv_path):
+        df_old = pd.read_csv(_csv_path)
         existing_ids = set(df_old["ID"].astype(int)) if "ID" in df_old.columns else set()
     else:
         df_old = pd.DataFrame()
         existing_ids = set()
 
     print(f"Activités connues : {len(existing_ids)}")
-    new_activities = backfill_activities(token, existing_ids, after_date=after_date)
+    new_activities = backfill_activities(access_token, existing_ids, after_date=after_date)
 
     if not new_activities:
         print("Aucune nouvelle activité trouvée dans la période.")
         return 0
 
-    df_new = format_activities(new_activities, token)
+    df_new = format_activities(new_activities, access_token)
     df_combined = pd.concat([df_old, df_new], ignore_index=True)
     df_combined["Date"] = pd.to_datetime(df_combined["Date"], format="mixed", utc=True)
     df_combined = df_combined.drop_duplicates(subset=["ID"], keep="first")
     df_combined = df_combined.sort_values("Date", ascending=True)
-    df_combined.to_csv(CSV_PATH, index=False, encoding="utf-8-sig")
-    print(f"{len(df_new)} activités ajoutées (backfill) → {CSV_PATH}")
+    df_combined.to_csv(_csv_path, index=False, encoding="utf-8-sig")
+    print(f"{len(df_new)} activités ajoutées (backfill) → {_csv_path}")
     print(f"Total : {len(df_combined)} activités")
 
-    state = load_sync_state()
+    state = _load_sync_state_from(_sync_state_path)
     state["strava_last_sync"] = datetime.now(timezone.utc).isoformat()
     state["strava_activities_total"] = len(df_combined)
     state["activities_last_sync"] = state["strava_last_sync"]
     state["activities_total"] = state["strava_activities_total"]
-    save_sync_state(state)
+    _save_sync_state_to(_sync_state_path, state)
 
     return len(df_new)
 
 
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) > 1 and sys.argv[1] == "--backfill":
-        after = sys.argv[2] if len(sys.argv) > 2 else "2023-01-01"
-        sync_backfill(after_date=after)
-    else:
-        sync_activities()
+    print("Usage: ce module est appelé par le pipeline sync.py")
+    print("Les tokens sont gérés par api/strava_oauth.py")
+    sys.exit(1)

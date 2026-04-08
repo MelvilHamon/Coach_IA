@@ -1,7 +1,8 @@
 """
 get_strava_gps.py — Récupère les coordonnées GPS depuis l'API Strava.
 
-Fallback pour les activités sans stream Garmin.
+Toutes les fonctions acceptent un access_token pré-validé.
+
 Endpoint : GET /activities/{id}/streams?keys=latlng,altitude,time&key_by_type=true
 
 Format de sortie identique au format Garmin :
@@ -19,51 +20,38 @@ import os
 import sys
 
 import requests
-from dotenv import load_dotenv
-
-load_dotenv()
 
 _ROOT     = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _GPS_DIR  = os.path.join(_ROOT, "data", "gps")
 
-CLIENT_ID     = os.getenv("CLIENT_ID")
-CLIENT_SECRET = os.getenv("CLIENT_SECRET")
-REFRESH_TOKEN = os.getenv("REFRESH_TOKEN")
-
-
-def _get_access_token() -> str:
-    """Rafraîchit le token Strava OAuth2 — même pattern que RecupDataStrava.py."""
-    response = requests.post(
-        url="https://www.strava.com/oauth/token",
-        data={
-            "client_id": CLIENT_ID,
-            "client_secret": CLIENT_SECRET,
-            "grant_type": "refresh_token",
-            "refresh_token": REFRESH_TOKEN,
-        },
-    )
-    response.raise_for_status()
-    return response.json()["access_token"]
-
 
 def fetch_strava_gps(
     activity_id: int,
-    access_token: str | None = None,
+    access_token: str,
     force: bool = False,
+    gps_dir: str = None,
 ) -> dict | None:
     """
     Récupère lat/lon/altitude/time depuis l'API Strava.
-    Stocke dans data/gps/strava_{activity_id}.json.
+    Stocke dans gps_dir/strava_{activity_id}.json.
+
+    Parameters
+    ----------
+    activity_id : ID de l'activité Strava
+    access_token : token Strava valide (obligatoire)
+    force : re-télécharger même si le fichier existe
+    gps_dir : répertoire de sortie GPS
 
     Retourne le dict GPS ou None si pas de données latlng.
     """
-    out_path = os.path.join(_GPS_DIR, f"strava_{activity_id}.json")
+    if not access_token:
+        raise ValueError("access_token requis pour fetch_strava_gps")
+
+    _gps_dir = gps_dir or _GPS_DIR
+    out_path = os.path.join(_gps_dir, f"strava_{activity_id}.json")
     if not force and os.path.exists(out_path):
         with open(out_path, encoding="utf-8") as f:
             return json.load(f)
-
-    if access_token is None:
-        access_token = _get_access_token()
 
     headers = {"Authorization": f"Bearer {access_token}"}
     r = requests.get(
@@ -105,7 +93,7 @@ def fetch_strava_gps(
         "points": points,
     }
 
-    os.makedirs(_GPS_DIR, exist_ok=True)
+    os.makedirs(_gps_dir, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2, ensure_ascii=False)
 
@@ -115,16 +103,6 @@ def fetch_strava_gps(
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python3 appelAPIs/get_strava_gps.py <strava_activity_id> [--force]")
-        sys.exit(1)
-
-    _aid = int(sys.argv[1])
-    _force = "--force" in sys.argv
-
-    res = fetch_strava_gps(_aid, force=_force)
-    if res:
-        print(f"OK — {len(res['points'])} points GPS (source=strava)")
-        print(f"Fichier : {os.path.join(_GPS_DIR, f'strava_{_aid}.json')}")
-    else:
-        print("Pas de données GPS latlng disponibles sur Strava pour cette activité.")
+    print("Usage: ce module est appelé par le pipeline sync.py")
+    print("Les tokens sont gérés par api/strava_oauth.py")
+    sys.exit(1)

@@ -4,19 +4,32 @@
 
 import { api } from '../api.js';
 import { el, sectionTitle, loading, empty, collapsible } from '../components.js';
-import { plotPace, plotEf, plotVo2 } from '../charts.js';
+import { plotPace, plotEf, plotVo2, plotSpeedTrend } from '../charts.js';
+import { getCurrentSport } from '../state.js';
 
 let _activeTab = 'pace';
 
 export async function renderProgression(container) {
   container.innerHTML = '';
 
-  // ── Sub-tabs ──
-  const tabs = [
-    { id: 'pace', label: 'Allure' },
-    { id: 'ef',   label: 'Efficiency Factor' },
-    { id: 'vo2',  label: 'VO2max' },
-  ];
+  const sport = getCurrentSport();
+
+  // ── Sub-tabs (adapt per sport) ──
+  const tabs = sport === 'velo'
+    ? [
+        { id: 'speed', label: 'Vitesse' },
+        { id: 'ef',    label: 'Efficiency Factor' },
+      ]
+    : [
+        { id: 'pace', label: 'Allure' },
+        { id: 'ef',   label: 'Efficiency Factor' },
+        { id: 'vo2',  label: 'VO2max' },
+      ];
+
+  // Reset active tab if not available for this sport
+  if (!tabs.find(t => t.id === _activeTab)) {
+    _activeTab = tabs[0].id;
+  }
 
   const tabBtns = tabs.map(t => {
     const btn = el('button', {
@@ -43,7 +56,7 @@ export async function renderProgression(container) {
 
     try {
       if (tabId === 'pace') {
-        const data = await api.chartPace();
+        const data = await api.chartPace(sport);
         content.innerHTML = '';
         if (!data.series?.length) {
           content.appendChild(empty('Pas de données d\'allure.'));
@@ -67,8 +80,25 @@ export async function renderProgression(container) {
           ),
         ));
 
+      } else if (tabId === 'speed') {
+        const data = await api.chartSpeed(sport);
+        content.innerHTML = '';
+        if (!data.series?.length) {
+          content.appendChild(empty('Pas de données de vitesse.'));
+          return;
+        }
+        const note = el('div', { className: 'ca-metric-explain', style: { marginBottom: '16px' } },
+          'Évolution de la vitesse moyenne (km/h) par type de séance. Une tendance ascendante indique une amélioration.',
+        );
+        content.appendChild(note);
+        const chartEl = el('div', { className: 'ca-chart-card' },
+          el('div', { id: 'chart-speed-trend', className: 'ca-chart-container' }),
+        );
+        content.appendChild(chartEl);
+        plotSpeedTrend(document.getElementById('chart-speed-trend'), data);
+
       } else if (tabId === 'ef') {
-        const data = await api.chartEf();
+        const data = await api.chartEf(sport);
         content.innerHTML = '';
         if (!data.points?.length) {
           content.appendChild(empty('FC requise pour calculer l\'Efficiency Factor.'));
@@ -96,7 +126,7 @@ export async function renderProgression(container) {
         ));
 
       } else if (tabId === 'vo2') {
-        const data = await api.chartVo2();
+        const data = await api.chartVo2(sport);
         content.innerHTML = '';
         if (!data.points?.length) {
           content.appendChild(empty('VO2max non calculable — nécessite FC et type de séance.'));

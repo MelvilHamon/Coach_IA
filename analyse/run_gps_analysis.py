@@ -64,20 +64,18 @@ def _nan_to_none(obj):
     return obj
 
 
-def _build_garmin_to_strava() -> dict:
+def _build_garmin_to_strava(gps_dir: str = None) -> dict:
     """
-    Construit {garmin_id: strava_id} depuis data/gps/{strava_id}.json.
-
-    Ces fichiers (produits par sync_garmin_gps.py) contiennent {strava_id, garmin_id, points}.
-    C'est la seule source de vérité disponible pour le matching actuel.
+    Construit {garmin_id: strava_id} depuis gps/{strava_id}.json.
     """
+    _dir = gps_dir or _GPS_DIR
     mapping = {}
-    if not os.path.isdir(_GPS_DIR):
+    if not os.path.isdir(_dir):
         return mapping
-    for fname in os.listdir(_GPS_DIR):
+    for fname in os.listdir(_dir):
         if not fname.endswith(".json"):
             continue
-        fpath = os.path.join(_GPS_DIR, fname)
+        fpath = os.path.join(_dir, fname)
         try:
             with open(fpath, encoding="utf-8") as f:
                 data = json.load(f)
@@ -90,11 +88,12 @@ def _build_garmin_to_strava() -> dict:
     return mapping
 
 
-def _load_strava_df() -> pd.DataFrame:
+def _load_strava_df(enriched_path: str = None) -> pd.DataFrame:
     """Charge activities_enriched.csv. Retourne DataFrame vide si absent."""
-    if not os.path.exists(_ENRICHED):
+    _path = enriched_path or _ENRICHED
+    if not os.path.exists(_path):
         return pd.DataFrame()
-    df = pd.read_csv(_ENRICHED)
+    df = pd.read_csv(_path)
     if "ID" in df.columns:
         df["ID"] = df["ID"].astype(int)
     return df
@@ -102,37 +101,47 @@ def _load_strava_df() -> pd.DataFrame:
 
 # ── Analyse principale ────────────────────────────────────────────────────────
 
-def run_gps_analysis(force: bool = False) -> None:
+def run_gps_analysis(force: bool = False, data_dir: str = None) -> None:
     """
-    Pour chaque stream dans data/garmin/streams/ :
+    Pour chaque stream dans garmin/streams/ :
     - calcule les métriques GPS scalaires via summarize_gps()
     - compare avec Strava si le matching est disponible
-    - stocke dans data/garmin/metrics/{garmin_id}.json
+    - stocke dans garmin/metrics/{garmin_id}.json
     - ignore les fichiers déjà calculés (sauf --force)
-    """
-    os.makedirs(_METRICS_DIR, exist_ok=True)
 
-    if not os.path.isdir(_STREAMS_DIR):
-        print(f"Répertoire streams introuvable : {_STREAMS_DIR}")
+    Parameters
+    ----------
+    data_dir : répertoire de données utilisateur (défaut: data/)
+    """
+    _data_dir = data_dir or os.path.join(_ROOT, "data")
+    _streams_dir = os.path.join(_data_dir, "garmin", "streams")
+    _metrics_dir = os.path.join(_data_dir, "garmin", "metrics")
+    _gps_dir = os.path.join(_data_dir, "gps")
+    _enriched = os.path.join(_data_dir, "activities_enriched.csv")
+
+    os.makedirs(_metrics_dir, exist_ok=True)
+
+    if not os.path.isdir(_streams_dir):
+        print(f"Répertoire streams introuvable : {_streams_dir}")
         print("Lancer d'abord : python3 appelAPIs/sync_garmin.py")
         return
 
     stream_files = sorted(
-        f for f in os.listdir(_STREAMS_DIR) if f.endswith(".json")
+        f for f in os.listdir(_streams_dir) if f.endswith(".json")
     )
     if not stream_files:
-        print("Aucun stream disponible dans", _STREAMS_DIR)
+        print("Aucun stream disponible dans", _streams_dir)
         return
 
     total = len(stream_files)
-    print(f"{total} stream(s) trouvé(s) dans {_STREAMS_DIR}")
+    print(f"{total} stream(s) trouvé(s) dans {_streams_dir}")
 
     # Mapping garmin_id → strava_id (depuis les GPS déjà matchés)
-    garmin_to_strava = _build_garmin_to_strava()
+    garmin_to_strava = _build_garmin_to_strava(_gps_dir)
     print(f"Mapping Garmin→Strava : {len(garmin_to_strava)} activité(s) matchée(s)")
 
     # CSV Strava enrichi
-    strava_df  = _load_strava_df()
+    strava_df  = _load_strava_df(_enriched)
     has_strava = not strava_df.empty and "ID" in strava_df.columns
     if not has_strava:
         print("activities_enriched.csv absent — comparaison Strava désactivée")
@@ -142,7 +151,7 @@ def run_gps_analysis(force: bool = False) -> None:
 
     for fname in stream_files:
         garmin_id = int(fname.replace(".json", ""))
-        out_path  = os.path.join(_METRICS_DIR, fname)
+        out_path  = os.path.join(_metrics_dir, fname)
 
         # Skip si déjà calculé
         if not force and os.path.exists(out_path):
@@ -150,7 +159,7 @@ def run_gps_analysis(force: bool = False) -> None:
             continue
 
         # Chargement du stream
-        stream_path = os.path.join(_STREAMS_DIR, fname)
+        stream_path = os.path.join(_streams_dir, fname)
         try:
             with open(stream_path, encoding="utf-8") as f:
                 stream = json.load(f)

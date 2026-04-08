@@ -1,15 +1,18 @@
 /**
- * app.js — Routeur et point d'entrée.
+ * app.js — Routeur et point d'entrée avec auth.
  */
 
 import { api } from './api.js';
 import { fmtDateShort } from './components.js';
+import { getCurrentSport, setCurrentSport } from './state.js';
 import { renderOverview } from './sections/overview.js';
 import { renderHistory } from './sections/history.js';
 import { renderProfil } from './sections/profil.js';
 import { renderProgression } from './sections/progression.js';
 import { renderCharge } from './sections/charge.js';
 import { renderAnalyse } from './sections/analyse.js';
+import { renderCalendrier } from './sections/calendrier.js';
+import { renderSettings } from './sections/settings.js';
 
 // ── Sections ────────────────────────────────────────────────────────────────
 
@@ -19,11 +22,114 @@ const SECTIONS = {
   profil:      renderProfil,
   progression: renderProgression,
   charge:      renderCharge,
+  calendrier:  renderCalendrier,
   analyse:     renderAnalyse,
+  settings:    renderSettings,
 };
 
 let _currentSection = 'overview';
 let _syncPolling = null;
+let _currentUser = null;
+
+// ── Auth ─────────────────────────────────────────────────────────────────────
+
+function showAuth() {
+  document.getElementById('auth-page').style.display = '';
+  document.getElementById('app-shell').style.display = 'none';
+}
+
+function showApp(user) {
+  _currentUser = user;
+  document.getElementById('auth-page').style.display = 'none';
+  document.getElementById('app-shell').style.display = '';
+  const userEl = document.getElementById('header-user');
+  if (userEl) userEl.textContent = user.display_name || user.email;
+}
+
+function initAuthForms() {
+  const emailForm = document.getElementById('otp-email-form');
+  const codeForm = document.getElementById('otp-code-form');
+  let _otpEmail = '';
+
+  function showEmailStep() {
+    emailForm.style.display = '';
+    codeForm.style.display = 'none';
+  }
+
+  function showCodeStep(email) {
+    _otpEmail = email;
+    emailForm.style.display = 'none';
+    codeForm.style.display = '';
+    document.getElementById('otp-email-display').textContent = email;
+    document.getElementById('otp-code').value = '';
+    document.getElementById('otp-code').focus();
+  }
+
+  // Step 1: Send OTP
+  emailForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errEl = document.getElementById('otp-email-error');
+    errEl.style.display = 'none';
+    const email = document.getElementById('otp-email').value.trim();
+    try {
+      const res = await api.sendOtp(email);
+      if (res.error) { errEl.textContent = res.error; errEl.style.display = ''; return; }
+      showCodeStep(email);
+    } catch (err) {
+      errEl.textContent = err.message; errEl.style.display = '';
+    }
+  });
+
+  // Step 2: Verify OTP
+  codeForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errEl = document.getElementById('otp-code-error');
+    errEl.style.display = 'none';
+    const code = document.getElementById('otp-code').value.trim();
+    try {
+      const res = await api.verifyOtp(_otpEmail, code);
+      if (res.error) { errEl.textContent = res.error; errEl.style.display = ''; return; }
+      showApp(res.user);
+      initHeader();
+      initSync();
+      navigate('overview');
+    } catch (err) {
+      errEl.textContent = err.message; errEl.style.display = '';
+    }
+  });
+
+  // Back to email step
+  document.getElementById('otp-back').addEventListener('click', showEmailStep);
+
+  // Resend OTP
+  document.getElementById('otp-resend').addEventListener('click', async () => {
+    const errEl = document.getElementById('otp-code-error');
+    errEl.style.display = 'none';
+    try {
+      await api.sendOtp(_otpEmail);
+      errEl.textContent = 'Nouveau code envoyé !';
+      errEl.style.display = '';
+      errEl.classList.add('ca-auth-success');
+      setTimeout(() => { errEl.style.display = 'none'; errEl.classList.remove('ca-auth-success'); }, 3000);
+    } catch (err) {
+      errEl.textContent = err.message; errEl.style.display = '';
+    }
+  });
+}
+
+async function checkSession() {
+  try {
+    const res = await api.me();
+    if (res.user) {
+      showApp(res.user);
+      return true;
+    }
+  } catch {
+    // not authenticated
+  }
+  showAuth();
+  return false;
+}
 
 // ── Navigation ──────────────────────────────────────────────────────────────
 
@@ -31,15 +137,12 @@ function navigate(section) {
   if (!SECTIONS[section]) section = 'overview';
   _currentSection = section;
 
-  // Update tabs
   document.querySelectorAll('.ca-nav-tab').forEach(tab => {
     tab.classList.toggle('active', tab.dataset.section === section);
   });
 
-  // Update hash
   window.location.hash = section;
 
-  // Render
   const container = document.getElementById('page-content');
   try {
     SECTIONS[section](container);
@@ -86,17 +189,12 @@ function _onSyncComplete(syncData) {
   const stepsRun = result.steps_run || [];
 
   if (stepsRun.includes('strava') || stepsRun.includes('analysis')) {
-    // Nouvelles activités ou analyse → rafraîchir la section active + header
     navigate(_currentSection);
     initHeader();
   } else if (stepsRun.includes('strava_gps') || stepsRun.includes('garmin') || stepsRun.includes('gps_analysis')) {
-    // Nouvelles données GPS → rafraîchir seulement si on est dans Analyse
-    if (_currentSection === 'analyse') {
-      navigate('analyse');
-    }
+    if (_currentSection === 'analyse') navigate('analyse');
     initHeader();
   } else {
-    // Rien de significatif → juste mettre à jour le timestamp
     initHeader();
   }
 }
@@ -164,10 +262,8 @@ async function initSync() {
     _updateSyncUI(st);
 
     if (st.sync_in_progress) {
-      // Un sync est déjà en cours (lancé au startup du serveur)
       _startSyncPolling();
     } else if (st.last_sync_ago_minutes == null || st.last_sync_ago_minutes > 30) {
-      // Données périmées → lancer le sync en background
       triggerSync();
     }
   } catch {
@@ -175,31 +271,74 @@ async function initSync() {
   }
 }
 
+// ── Logout ──────────────────────────────────────────────────────────────────
+
+async function logout() {
+  try { await api.logout(); } catch { /* ok */ }
+  _currentUser = null;
+  _stopSyncPolling();
+  showAuth();
+}
+
 // ── Init ────────────────────────────────────────────────────────────────────
 
-document.addEventListener('DOMContentLoaded', () => {
-  // Nav clicks
-  document.querySelectorAll('.ca-nav-tab').forEach(tab => {
-    tab.addEventListener('click', () => navigate(tab.dataset.section));
+document.addEventListener('DOMContentLoaded', async () => {
+  initAuthForms();
+
+  // Listen for 401 forced logouts
+  window.addEventListener('ca:logout', () => {
+    _currentUser = null;
+    showAuth();
   });
 
-  // Sync button
-  const syncBtn = document.getElementById('sync-btn');
-  if (syncBtn) {
-    syncBtn.addEventListener('click', () => triggerSync());
+  // Check existing session
+  const authenticated = await checkSession();
+
+  if (authenticated) {
+    // Nav clicks
+    document.querySelectorAll('.ca-nav-tab').forEach(tab => {
+      tab.addEventListener('click', () => navigate(tab.dataset.section));
+    });
+
+    // Sport selector
+    document.querySelectorAll('.ca-sport-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        setCurrentSport(btn.dataset.sport);
+        document.querySelectorAll('.ca-sport-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        navigate(_currentSection); // re-render current section with new sport
+      });
+    });
+
+    // Sync button
+    const syncBtn = document.getElementById('sync-btn');
+    if (syncBtn) syncBtn.addEventListener('click', () => triggerSync());
+
+    // Logout button
+    const logoutBtn = document.getElementById('logout-btn');
+    if (logoutBtn) logoutBtn.addEventListener('click', () => logout());
+
+    // Hash routing (strip query params: #settings?strava=connected → settings)
+    const hash = window.location.hash.slice(1).split('?')[0];
+    const initial = SECTIONS[hash] ? hash : 'overview';
+
+    initHeader();
+    initSync();
+    navigate(initial);
+  } else {
+    // Still wire nav for after login
+    document.querySelectorAll('.ca-nav-tab').forEach(tab => {
+      tab.addEventListener('click', () => navigate(tab.dataset.section));
+    });
+    const syncBtn = document.getElementById('sync-btn');
+    if (syncBtn) syncBtn.addEventListener('click', () => triggerSync());
+    const logoutBtn = document.getElementById('logout-btn');
+    if (logoutBtn) logoutBtn.addEventListener('click', () => logout());
   }
-
-  // Hash routing
-  const hash = window.location.hash.slice(1);
-  const initial = SECTIONS[hash] ? hash : 'overview';
-
-  initHeader();
-  initSync();
-  navigate(initial);
 });
 
 window.addEventListener('hashchange', () => {
-  const hash = window.location.hash.slice(1);
+  const hash = window.location.hash.slice(1).split('?')[0];
   if (SECTIONS[hash] && hash !== _currentSection) {
     navigate(hash);
   }

@@ -7,6 +7,7 @@ import {
   el, sectionTitle, badge, fmt, fmtDate, loading, empty,
   acwrColor, riskColor, reviewBox,
 } from '../components.js';
+import { getCurrentSport } from '../state.js';
 
 let _currentPeriod = 'all';
 let _currentType = null;
@@ -16,9 +17,11 @@ export async function renderHistory(container) {
   container.innerHTML = '';
   container.appendChild(loading());
 
+  const sport = getCurrentSport();
+
   try {
     const [activitiesRes, typesRes] = await Promise.all([
-      api.activities({ limit: 500 }),
+      api.activities({ limit: 500, sport }),
       api.activityTypes(),
     ]);
 
@@ -155,9 +158,12 @@ function renderTable(container, activities) {
     return;
   }
 
+  const sport = getCurrentSport();
+  const speedCol = sport === 'velo' ? 'Vitesse' : 'Allure';
+
   const thead = el('thead', {},
     el('tr', {},
-      ...['Date', 'Nom', 'Type', 'Distance', 'Allure', 'TRIMP', 'ACWR', 'Risque'].map(h =>
+      ...['Date', 'Nom', 'Type', 'Distance', speedCol, 'TRIMP', 'ACWR', 'Risque'].map(h =>
         el('th', {}, h),
       ),
     ),
@@ -168,12 +174,17 @@ function renderTable(container, activities) {
     const acwr_v = a.acwr_km;
     const risk = a.injury_risk_label || '—';
 
+    let speedDisplay = a.pace_display || '—';
+    if (sport === 'velo' && a.distance_km && a.temps_min && a.temps_min > 0) {
+      speedDisplay = fmt(a.distance_km / (a.temps_min / 60), 1) + ' km/h';
+    }
+
     tbody.appendChild(el('tr', {},
       el('td', { className: 'dim' }, fmtDate(a.date)),
       el('td', { className: 'dim' }, (a.nom || '').slice(0, 30)),
       el('td', {}, badge(a.session_type)),
       el('td', {}, a.distance_km != null ? fmt(a.distance_km, 1) + ' km' : '—'),
-      el('td', {}, a.pace_display || '—'),
+      el('td', {}, speedDisplay),
       el('td', {}, fmt(a.trimp, 0)),
       el('td', { style: { color: acwrColor(acwr_v) } }, fmt(acwr_v, 2)),
       el('td', { style: { color: riskColor(risk), fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.1em' } }, risk),

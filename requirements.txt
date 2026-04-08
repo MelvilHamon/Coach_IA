@@ -1,17 +1,26 @@
-openai>=1.0.0
-python-dotenv>=1.0.0
-pandas>=2.0.0
-Flask>=3.0.0
-requests>=2.31.0
-numpy>=1.26.0
-scipy>=1.13.0
-scikit-learn>=1.4.0
-matplotlib>=3.8.0
-fitparse>=1.2.0
-plotly>=5.18.0
-dash>=2.14.0
-dash-bootstrap-components>=1.5.0
-garminconnect>=0.2.19
-folium>=0.15.0
-fastapi>=0.115.0
-uvicorn>=0.32.0
+# ── Core API ─────────────────────────────────────────────────────────────────
+fastapi==0.115.6
+uvicorn==0.32.1
+pydantic==2.10.4
+python-dotenv==1.0.1
+cryptography==44.0.0
+sqlalchemy==2.0.36
+
+# ── PostgreSQL (production only — install with: pip install psycopg2-binary)
+# psycopg2-binary==2.9.10
+
+# ── Data / Analysis ─────────────────────────────────────────────────────────
+pandas==2.2.3
+numpy==2.2.1
+requests==2.32.3
+
+# ── LLM ──────────────────────────────────────────────────────────────────────
+openai==1.58.1
+
+# ── Strava / Garmin sync ────────────────────────────────────────────────────
+garminconnect==0.2.25
+garth==0.4.14
+
+# ── FIT file handling ────────────────────────────────────────────────────────
+fitparse==1.2.0
+fit-tool==0.9.13

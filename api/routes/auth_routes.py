@@ -1,0 +1,202 @@
+"""
+api/routes/auth_routes.py — Authentication: OTP login + Strava OAuth linking.
+"""
+
+import secrets
+
+from fastapi import APIRouter, Depends, Request, Response
+from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
+
+from api.auth import (
+    send_otp, verify_otp,
+    create_session, delete_session,
+    update_display_name,
+    save_garmin_credentials,
+    has_garmin_credentials, has_strava_connected,
+    get_strava_tokens, save_strava_tokens, disconnect_strava,
+    save_user_profile, get_user_profile,
+    create_oauth_state, verify_oauth_state,
+)
+from api.config import COOKIE_SECURE, COOKIE_SAMESITE, COOKIE_DOMAIN, SESSION_MAX_AGE_DAYS
+from api.strava_oauth import get_authorize_url, exchange_code
+from api.dependencies import get_current_user, SESSION_COOKIE
+
+router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+
+# ── Models ────────────────────────────────────────────────────────────────────
+
+class SendOtpBody(BaseModel):
+    email: str
+
+class VerifyOtpBody(BaseModel):
+    email: str
+    code: str
+    display_name: str = ""
+
+class GarminCredsBody(BaseModel):
+    email: str
+    password: str
+
+class UserProfileBody(BaseModel):
+    gender: str = "male"
+    hr_max: int | None = None
+    hr_rest: int | None = None
+    hr_threshold: int | None = None
+    hr_z1_max: int | None = None
+    hr_z2_max: int | None = None
+    hr_z3_max: int | None = None
+    hr_z4_max: int | None = None
+    hr_z5_max: int | None = None
+
+
+# ── Public endpoints (no auth required) ───────────────────────────────────────
+
+@router.post("/send-otp")
+def handle_send_otp(body: SendOtpBody):
+    """Send a 6-digit OTP to the given email. Creates account on first verify."""
+    try:
+        result = send_otp(body.email)
+        return result
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@router.post("/verify-otp")
+def handle_verify_otp(body: VerifyOtpBody, response: Response):
+    """Verify the OTP code. Auto-creates user if new. Returns session cookie."""
+    user = verify_otp(body.email, body.code)
+    if not user:
+        return {"error": "Code invalide ou expiré."}
+    if body.display_name and body.display_name.strip() != user["display_name"]:
+        update_display_name(user["id"], body.display_name)
+        user["display_name"] = body.display_name.strip()
+    token = create_session(user["id"])
+    response.set_cookie(
+        SESSION_COOKIE, token,
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite=COOKIE_SAMESITE,
+        max_age=SESSION_MAX_AGE_DAYS * 86400,
+        domain=COOKIE_DOMAIN,
+        path="/",
+    )
+    return {"ok": True, "user": user}
+
+
+@router.post("/logout")
+def logout(request: Request, response: Response):
+    token = request.cookies.get(SESSION_COOKIE)
+    if token:
+        delete_session(token)
+    response.delete_cookie(SESSION_COOKIE)
+    return {"ok": True}
+
+
+# ── Strava OAuth ─────────────────────────────────────────────────────────────
+
+@router.get("/strava/login")
+def strava_login(request: Request, user: dict = Depends(get_current_user)):
+    """
+    Redirige vers Strava pour autoriser l'accès.
+    L'utilisateur doit être connecté (session cookie).
+    Inclut un state token pour protection CSRF.
+    """
+    import logging
+    logger = logging.getLogger("coachagent.auth")
+
+    base = str(request.base_url).rstrip("/")
+    redirect_uri = f"{base}/api/auth/strava/callback"
+    state = create_oauth_state(user["id"])
+    try:
+        url = get_authorize_url(redirect_uri=redirect_uri, state=state)
+    except ValueError as e:
+        logger.error("Strava config error: %s", e)
+        return RedirectResponse(url="/#settings?error=strava_not_configured", status_code=302)
+    logger.info("Redirecting user %s to Strava OAuth", user["id"])
+    return RedirectResponse(url=url, status_code=302)
+
+
+@router.get("/strava/callback")
+def strava_callback(request: Request, code: str = "", error: str = "", state: str = ""):
+    """
+    Callback Strava OAuth. Vérifie le state, échange le code contre des tokens.
+    Redirige vers le frontend (settings).
+    """
+    import logging
+    logger = logging.getLogger("coachagent.auth")
+
+    # Verify CSRF state token (primary auth method for callback)
+    state_user_id = verify_oauth_state(state)
+    if not state_user_id:
+        # Fallback: try session cookie (for backward compat during transition)
+        from api.auth import get_user_by_session
+        session_token = request.cookies.get(SESSION_COOKIE)
+        user = get_user_by_session(session_token) if session_token else None
+        if not user:
+            logger.warning("Strava callback: invalid state and no session")
+            return RedirectResponse(url="/#settings?error=not_authenticated", status_code=302)
+        user_id = user["id"]
+    else:
+        user_id = state_user_id
+
+    if error or not code:
+        logger.info("Strava denied or no code: error=%s", error)
+        return RedirectResponse(url="/#settings?error=strava_denied", status_code=302)
+
+    try:
+        tokens = exchange_code(code)
+        logger.info("Strava token exchange OK for user %s, athlete_id=%s",
+                     user_id, tokens["athlete_id"])
+        save_strava_tokens(
+            user_id=user_id,
+            athlete_id=tokens["athlete_id"],
+            access_token=tokens["access_token"],
+            refresh_token=tokens["refresh_token"],
+            expires_at=tokens["expires_at"],
+        )
+        return RedirectResponse(url="/#settings?strava=connected", status_code=302)
+    except Exception as e:
+        logger.error("Strava callback error for user %s: %s", user_id, e)
+        return RedirectResponse(url="/#settings?error=strava_exchange_failed", status_code=302)
+
+
+@router.post("/strava/disconnect")
+def strava_disconnect(user: dict = Depends(get_current_user)):
+    """Déconnecte le compte Strava de l'utilisateur."""
+    disconnect_strava(user["id"])
+    return {"ok": True}
+
+
+# ── Protected endpoints ───────────────────────────────────────────────────────
+
+@router.get("/me")
+def me(user: dict = Depends(get_current_user)):
+    profile = get_user_profile(user["id"])
+    strava_tokens = get_strava_tokens(user["id"])
+    return {
+        "user": user,
+        "has_garmin": has_garmin_credentials(user["id"]),
+        "has_strava": has_strava_connected(user["id"]),
+        "strava_athlete_id": strava_tokens["athlete_id"] if strava_tokens else None,
+        "profile": profile,
+    }
+
+
+@router.get("/profile")
+def read_profile(user: dict = Depends(get_current_user)):
+    profile = get_user_profile(user["id"])
+    return {"profile": profile}
+
+
+@router.post("/profile")
+def set_profile(body: UserProfileBody, user: dict = Depends(get_current_user)):
+    save_user_profile(user["id"], body.model_dump())
+    return {"ok": True}
+
+
+@router.post("/garmin-credentials")
+def set_garmin(body: GarminCredsBody, user: dict = Depends(get_current_user)):
+    save_garmin_credentials(user["id"], body.email, body.password)
+    return {"ok": True}

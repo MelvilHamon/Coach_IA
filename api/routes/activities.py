@@ -2,25 +2,31 @@
 api/routes/activities.py — Endpoints activités.
 """
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from typing import Optional
 
 from api.deps import load_activities, get_stream, nan_safe
+from api.dependencies import get_current_user
 
 router = APIRouter(prefix="/api/activities", tags=["activities"])
 
 
 @router.get("")
 def list_activities(
+    user: dict = Depends(get_current_user),
     type: Optional[str] = Query(None, description="Filtrer par session_type"),
+    sport: Optional[str] = Query(None, description="Filtrer par sport : run, velo, autre"),
     period: Optional[str] = Query(None, description="30j, 90j, ou all"),
     limit: int = Query(200, ge=1, le=1000),
     offset: int = Query(0, ge=0),
 ):
     """Liste paginée des activités enrichies."""
-    df = load_activities()
+    df = load_activities(user["id"])
     if df.empty:
         return {"activities": [], "total": 0}
+
+    if sport and sport != "all" and "sport" in df.columns:
+        df = df[df["sport"] == sport]
 
     if type and type != "Tous":
         df = df[df["session_type"] == type]
@@ -48,6 +54,7 @@ def list_activities(
             "denivele_m":           row.get("Dénivelé (m)"),
             "fc_bpm":               row.get("Fréquence cardiaque (bpm)"),
             "type_strava":          row.get("Type", ""),
+            "sport":                row.get("sport", ""),
             "session_type":         row.get("session_type", ""),
             "trimp":                row.get("trimp"),
             "hrtss":                row.get("hrtss"),
@@ -60,6 +67,11 @@ def list_activities(
             "tsb":                  row.get("tsb"),
             "monotony":             row.get("monotony"),
             "strain":               row.get("strain"),
+            "z1_min":               row.get("z1_min"),
+            "z2_min":               row.get("z2_min"),
+            "z3_min":               row.get("z3_min"),
+            "z4_min":               row.get("z4_min"),
+            "z5_min":               row.get("z5_min"),
             "flags": {
                 "acwr":        row.get("flag_acwr"),
                 "monotony":    row.get("flag_monotony"),
@@ -72,9 +84,9 @@ def list_activities(
 
 
 @router.get("/types")
-def list_types():
+def list_types(user: dict = Depends(get_current_user)):
     """Types de séances disponibles."""
-    df = load_activities()
+    df = load_activities(user["id"])
     if df.empty:
         return {"types": []}
     types = sorted(df["session_type"].dropna().unique().tolist())
@@ -82,9 +94,9 @@ def list_types():
 
 
 @router.get("/{activity_id}")
-def get_activity(activity_id: int):
+def get_activity(activity_id: int, user: dict = Depends(get_current_user)):
     """Détail complet d'une activité."""
-    df = load_activities()
+    df = load_activities(user["id"])
     if df.empty:
         return {"error": "no_data"}
 
@@ -119,9 +131,9 @@ def get_activity(activity_id: int):
 
 
 @router.get("/{activity_id}/stream")
-def get_activity_stream(activity_id: int):
+def get_activity_stream(activity_id: int, user: dict = Depends(get_current_user)):
     """Stream Strava (time, speed, HR, altitude) pour une activité."""
-    stream_df = get_stream(activity_id)
+    stream_df = get_stream(activity_id, user["id"])
     if stream_df is None:
         return {"error": "no_stream", "points": []}
 

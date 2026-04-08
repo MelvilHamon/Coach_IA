@@ -3,20 +3,35 @@ api/routes/charts.py — Endpoints données pour graphiques.
 
 Retourne des données structurées, pas des figures Plotly.
 Le frontend construit les graphiques.
+
+Tous les endpoints acceptent un paramètre optionnel `sport` (run, velo, all).
 """
 
 import pandas as pd
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Query
+from typing import Optional
 
 from api.deps import load_activities, nan_safe
+from api.dependencies import get_current_user
 
 router = APIRouter(prefix="/api/charts", tags=["charts"])
 
 
+def _filter_sport(df: pd.DataFrame, sport: str | None) -> pd.DataFrame:
+    """Filtre le DataFrame par sport si la colonne existe et sport est spécifié."""
+    if sport and sport != "all" and "sport" in df.columns:
+        return df[df["sport"] == sport]
+    return df
+
+
 @router.get("/volume")
-def chart_volume():
+def chart_volume(
+    user: dict = Depends(get_current_user),
+    sport: Optional[str] = Query(None),
+):
     """Volume hebdomadaire (16 dernières semaines) + ACWR par semaine."""
-    df = load_activities()
+    df = load_activities(user["id"])
+    df = _filter_sport(df, sport)
     if df.empty:
         return {"weeks": []}
 
@@ -55,9 +70,13 @@ def chart_volume():
 
 
 @router.get("/acwr")
-def chart_acwr():
+def chart_acwr(
+    user: dict = Depends(get_current_user),
+    sport: Optional[str] = Query(None),
+):
     """ACWR sur 90 jours."""
-    df = load_activities()
+    df = load_activities(user["id"])
+    df = _filter_sport(df, sport)
     if df.empty:
         return {"points": []}
 
@@ -81,25 +100,38 @@ def chart_acwr():
 
 
 @router.get("/pace")
-def chart_pace():
+def chart_pace(
+    user: dict = Depends(get_current_user),
+    sport: Optional[str] = Query(None),
+):
     """Allure par type de séance."""
-    df = load_activities()
+    df = load_activities(user["id"])
+    df = _filter_sport(df, sport)
     if df.empty:
         return {"series": []}
 
-    run_types = [
-        "endurance fondamentale", "fractionné court", "fractionné moyen",
-        "fractionné long", "mixte", "tempo / seuil", "sortie longue",
-    ]
+    # Déterminer les types de séances pertinents selon le sport
+    detected_sport = sport or "run"
+    if detected_sport == "velo":
+        target_types = [
+            "endurance vélo", "sortie longue vélo", "tempo vélo",
+            "récupération vélo", "intervalles vélo",
+        ]
+    else:
+        target_types = [
+            "endurance fondamentale", "fractionné court", "fractionné moyen",
+            "fractionné long", "mixte", "tempo / seuil", "sortie longue",
+        ]
+
     df_p = df[
-        df["session_type"].isin(run_types) & df["Allure (min/km)"].notna()
+        df["session_type"].isin(target_types) & df["Allure (min/km)"].notna()
     ].sort_values("Date")
 
     if df_p.empty:
         return {"series": []}
 
     series = []
-    for stype in run_types:
+    for stype in target_types:
         sub = df_p[df_p["session_type"] == stype]
         if sub.empty:
             continue
@@ -114,10 +146,69 @@ def chart_pace():
     return {"series": series}
 
 
+@router.get("/speed")
+def chart_speed(
+    user: dict = Depends(get_current_user),
+    sport: Optional[str] = Query(None),
+):
+    """Vitesse moyenne par type de séance (utile pour le vélo)."""
+    df = load_activities(user["id"])
+    df = _filter_sport(df, sport)
+    if df.empty:
+        return {"series": []}
+
+    # Calculer la vitesse si pas déjà présente
+    df = df.copy()
+    df["speed_kmh"] = df.apply(
+        lambda r: r["Distance (km)"] / (r["Temps (min)"] / 60)
+        if r.get("Temps (min)") and r["Temps (min)"] > 0 and r.get("Distance (km)") and r["Distance (km)"] > 0
+        else None,
+        axis=1,
+    )
+
+    detected_sport = sport or "run"
+    if detected_sport == "velo":
+        target_types = [
+            "endurance vélo", "sortie longue vélo", "tempo vélo",
+            "récupération vélo", "intervalles vélo",
+        ]
+    else:
+        target_types = [
+            "endurance fondamentale", "fractionné court", "fractionné moyen",
+            "fractionné long", "mixte", "tempo / seuil", "sortie longue",
+        ]
+
+    df_s = df[
+        df["session_type"].isin(target_types) & df["speed_kmh"].notna()
+    ].sort_values("Date")
+
+    if df_s.empty:
+        return {"series": []}
+
+    series = []
+    for stype in target_types:
+        sub = df_s[df_s["session_type"] == stype]
+        if sub.empty:
+            continue
+        points = []
+        for _, row in sub.iterrows():
+            points.append(nan_safe({
+                "date":  row["Date"].isoformat(),
+                "speed": round(row["speed_kmh"], 1),
+            }))
+        series.append({"type": stype, "points": points})
+
+    return {"series": series}
+
+
 @router.get("/ef")
-def chart_ef():
+def chart_ef(
+    user: dict = Depends(get_current_user),
+    sport: Optional[str] = Query(None),
+):
     """Efficiency Factor avec moyenne glissante."""
-    df = load_activities()
+    df = load_activities(user["id"])
+    df = _filter_sport(df, sport)
     if df.empty:
         return {"points": []}
 
@@ -139,9 +230,13 @@ def chart_ef():
 
 
 @router.get("/vo2")
-def chart_vo2():
+def chart_vo2(
+    user: dict = Depends(get_current_user),
+    sport: Optional[str] = Query(None),
+):
     """VO2max estimé avec tendance."""
-    df = load_activities()
+    df = load_activities(user["id"])
+    df = _filter_sport(df, sport)
     if df.empty:
         return {"points": []}
 
@@ -163,9 +258,13 @@ def chart_vo2():
 
 
 @router.get("/distribution")
-def chart_distribution():
+def chart_distribution(
+    user: dict = Depends(get_current_user),
+    sport: Optional[str] = Query(None),
+):
     """Répartition des types de séances."""
-    df = load_activities()
+    df = load_activities(user["id"])
+    df = _filter_sport(df, sport)
     if df.empty:
         return {"types": []}
 
@@ -184,9 +283,13 @@ def chart_distribution():
 
 
 @router.get("/fitness")
-def chart_fitness():
+def chart_fitness(
+    user: dict = Depends(get_current_user),
+    sport: Optional[str] = Query(None),
+):
     """CTL / ATL / TSB (Banister EWMA) sur 90 jours."""
-    df = load_activities()
+    df = load_activities(user["id"])
+    df = _filter_sport(df, sport)
     if df.empty:
         return {"points": []}
 
@@ -214,9 +317,13 @@ def chart_fitness():
 
 
 @router.get("/monotony")
-def chart_monotony():
+def chart_monotony(
+    user: dict = Depends(get_current_user),
+    sport: Optional[str] = Query(None),
+):
     """Monotony & Strain (Foster 1998) sur 90 jours."""
-    df = load_activities()
+    df = load_activities(user["id"])
+    df = _filter_sport(df, sport)
     if df.empty:
         return {"points": []}
 

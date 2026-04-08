@@ -55,11 +55,13 @@ from metrics import (
     load_config,
 )
 from session_classifier import detect_session_type
+from sport_mapping import get_sport
 
 
 # ── Colonnes enrichies ────────────────────────────────────────────────────────
 
 _ENRICHED_COLS = [
+    "sport",
     "trimp", "hrtss",
     "z1_min", "z2_min", "z3_min", "z4_min", "z5_min",
     "z1_pct", "z2_pct", "z3_pct", "z4_pct", "z5_pct",
@@ -90,17 +92,19 @@ _POST_PROCESSING_COLS = {
 }
 
 _NAN_ROW = {col: float("nan") for col in _ENRICHED_COLS}
+_NAN_ROW["sport"] = "autre"  # sport is a string, not NaN
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _stream_path(activity_id: int) -> str | None:
-    p = os.path.join(_STREAMS_DIR, f"{activity_id}.csv")
+def _stream_path(activity_id: int, streams_dir: str = None) -> str | None:
+    _dir = streams_dir or _STREAMS_DIR
+    p = os.path.join(_dir, f"{activity_id}.csv")
     return p if os.path.exists(p) else None
 
 
-def _load_stream(activity_id: int) -> pd.DataFrame | None:
-    p = _stream_path(activity_id)
+def _load_stream(activity_id: int, streams_dir: str = None) -> pd.DataFrame | None:
+    p = _stream_path(activity_id, streams_dir)
     if p is None:
         return None
     try:
@@ -111,18 +115,22 @@ def _load_stream(activity_id: int) -> pd.DataFrame | None:
 
 # ── Calcul par activité ───────────────────────────────────────────────────────
 
-def _compute_activity_metrics(row: pd.Series, config: dict) -> dict:
+def _compute_activity_metrics(row: pd.Series, config: dict, streams_dir: str = None) -> dict:
     """
     Calcule les métriques pour une seule activité.
     Retourne un dict avec les colonnes enrichies (NaN si données manquantes).
     """
     athlete = config.get("athlete", {})
-    hr_max       = athlete.get("hr_max", 195)
-    hr_rest      = athlete.get("hr_rest", 45)
-    hr_threshold = athlete.get("hr_threshold", 166)
-    sex          = athlete.get("sex", "male")
+    hr_max            = athlete.get("hr_max", 195)
+    hr_rest           = athlete.get("hr_rest", 45)
+    hr_threshold      = athlete.get("hr_threshold", 166)
+    sex               = athlete.get("sex", "male")
+    hr_zones_custom   = athlete.get("hr_zones_custom")  # list of 5 BPM or None
 
     result = dict(_NAN_ROW)  # valeurs par défaut NaN
+
+    # Sport normalisé (run / velo / autre)
+    result["sport"] = get_sport(str(row.get("Type", "Run")))
 
     distance_km  = float(row.get("Distance (km)", 0) or 0)
     duration_min = float(row.get("Temps (min)", 0) or 0)
@@ -139,12 +147,12 @@ def _compute_activity_metrics(row: pd.Series, config: dict) -> dict:
         result["efficiency_factor"] = compute_efficiency_factor(distance_km, duration_min, hr_mean)
 
     # ── Stream-based metrics ──────────────────────────────────────────────────
-    stream_df = _load_stream(int(row["ID"]))
-    stream_path = _stream_path(int(row["ID"]))
+    stream_df = _load_stream(int(row["ID"]), streams_dir)
+    stream_path = _stream_path(int(row["ID"]), streams_dir)
 
     if stream_df is not None:
         # Zones FC
-        zones = compute_hr_zones(stream_df, hr_max)
+        zones = compute_hr_zones(stream_df, hr_max, hr_zones_custom=hr_zones_custom)
         result.update(zones)
 
         # Découplag aérobie
@@ -158,18 +166,37 @@ def _compute_activity_metrics(row: pd.Series, config: dict) -> dict:
 
 # ── Pipeline principale ───────────────────────────────────────────────────────
 
-def run_analysis(force: bool = False) -> None:
+def run_analysis(force: bool = False, data_dir: str = None, config_path: str = None) -> None:
+    """
+    Pipeline d'analyse enrichie.
+
+    Parameters
+    ----------
+    data_dir : répertoire de données utilisateur (défaut: data/)
+    config_path : chemin vers config.json (défaut: config.json racine)
+    """
+    # Resolve paths
+    _data_dir = data_dir or os.path.join(_ROOT, "data")
+    _csv_path = os.path.join(_data_dir, "mes_activites_strava.csv")
+    _enriched = os.path.join(_data_dir, "activities_enriched.csv")
+    _streams_dir = os.path.join(_data_dir, "streams")
+    _gps_dir = os.path.join(_data_dir, "gps")
+    _garmin_streams = os.path.join(_data_dir, "garmin", "streams")
+    _pr_path = os.path.join(_data_dir, "personal_records.json")
+    _sync_state = os.path.join(_data_dir, "sync_state.json")
+    _cfg_path = config_path or _CONFIG_PATH
+
     print("=== run_analysis.py — Pipeline d'analyse enrichie ===\n")
 
     # ── Chargement config ─────────────────────────────────────────────────────
-    config = load_config()
+    config = load_config(_cfg_path)
 
     # ── Chargement activités de base ──────────────────────────────────────────
-    if not os.path.exists(_CSV_PATH):
-        print(f"ERREUR : fichier activités introuvable : {_CSV_PATH}")
+    if not os.path.exists(_csv_path):
+        print(f"ERREUR : fichier activités introuvable : {_csv_path}")
         sys.exit(1)
 
-    df = pd.read_csv(_CSV_PATH)
+    df = pd.read_csv(_csv_path)
     df["Date"] = pd.to_datetime(df["Date"], utc=True)
     df = df.sort_values("Date").reset_index(drop=True)
     print(f"Activités chargées : {len(df)}")
@@ -178,18 +205,27 @@ def run_analysis(force: bool = False) -> None:
     already_computed_ids = set()
     enriched_cache = {}
 
-    if not force and os.path.exists(_ENRICHED):
-        df_existing = pd.read_csv(_ENRICHED)
+    if not force and os.path.exists(_enriched):
+        df_existing = pd.read_csv(_enriched)
         # IDs déjà calculés (session_type non vide)
         mask = df_existing["session_type"].notna()
-        already_computed_ids = set(df_existing.loc[mask, "ID"].astype(int))
+        recompute_count = 0
         # Stocker les valeurs calculées par ID
         for _, r in df_existing[mask].iterrows():
-            enriched_cache[int(r["ID"])] = {
+            act_id = int(r["ID"])
+            # Skip cache if zones are missing but a stream file now exists
+            has_zones = pd.notna(r.get("z1_pct"))
+            if not has_zones and _stream_path(act_id, _streams_dir) is not None:
+                recompute_count += 1
+                continue  # Force recomputation
+            already_computed_ids.add(act_id)
+            enriched_cache[act_id] = {
                 col: r[col] for col in _ENRICHED_COLS
                 if col in df_existing.columns and col not in _POST_PROCESSING_COLS
             }
         print(f"Activités déjà analysées : {len(already_computed_ids)} (sautées)")
+        if recompute_count:
+            print(f"Activités à recalculer (streams disponibles) : {recompute_count}")
 
     new_ids = [int(i) for i in df["ID"] if int(i) not in already_computed_ids]
     print(f"Activités à analyser     : {len(new_ids)}\n")
@@ -203,7 +239,7 @@ def run_analysis(force: bool = False) -> None:
             m = dict(enriched_cache[act_id])
         else:
             print(f"  [{act_id}] {str(row['Nom'])[:40]:<40} ", end="", flush=True)
-            m = _compute_activity_metrics(row, config)
+            m = _compute_activity_metrics(row, config, _streams_dir)
             print(f"→ {m.get('session_type', '?')}")
 
         metrics_rows.append(m)
@@ -250,33 +286,39 @@ def run_analysis(force: bool = False) -> None:
 
     # ── Assemblage final ──────────────────────────────────────────────────────
     df_enriched = pd.concat([df, df_metrics[_ENRICHED_COLS]], axis=1)
-    df_enriched.to_csv(_ENRICHED, index=False, encoding="utf-8-sig")
-    print(f"\nFichier enrichi sauvegardé : {_ENRICHED}")
+    df_enriched.to_csv(_enriched, index=False, encoding="utf-8-sig")
+    print(f"\nFichier enrichi sauvegardé : {_enriched}")
 
     # ── Personal Records (sliding window GPS) ──────────────────────────────────
     print("Calcul des records personnels (sliding window GPS)…")
-    pr = compute_personal_records(_GPS_DIR, _GARMIN_STREAMS, activities_df=df)
-    with open(_PR_PATH, "w", encoding="utf-8") as f:
+    pr_run = compute_personal_records(_gps_dir, _garmin_streams, activities_df=df, sport_filter="run")
+    pr_velo = compute_personal_records(_gps_dir, _garmin_streams, activities_df=df, sport_filter="velo")
+    pr = {"run": pr_run, "velo": pr_velo}
+    os.makedirs(os.path.dirname(_pr_path), exist_ok=True)
+    with open(_pr_path, "w", encoding="utf-8") as f:
         json.dump(pr, f, indent=2, ensure_ascii=False)
-    pr_dists = ", ".join(f"{k}: {v['pace']}/km" for k, v in pr.items())
-    print(f"  Records trouvés : {pr_dists or 'aucun'}")
+    pr_run_dists = ", ".join(f"{k}: {v['pace']}/km" for k, v in pr_run.items())
+    pr_velo_dists = ", ".join(f"{k}: {v['pace']}/km" for k, v in pr_velo.items())
+    print(f"  Records run   : {pr_run_dists or 'aucun'}")
+    print(f"  Records vélo  : {pr_velo_dists or 'aucun'}")
 
     # ── Profil de vitesse athlète → config.json ───────────────────────────────
     speed_profile = compute_athlete_speed_profile(df_enriched)
     config["athlete_speed_profile"] = speed_profile
-    with open(_CONFIG_PATH, "w", encoding="utf-8") as f:
+    with open(_cfg_path, "w", encoding="utf-8") as f:
         json.dump(config, f, indent=2, ensure_ascii=False)
     print(f"Profil vitesse : p75={speed_profile['p75_kmh']} km/h "
           f"(calculé sur {speed_profile['computed_from_n_activities']} runs)")
 
     # ── Mise à jour sync_state.json ───────────────────────────────────────────
     state = {}
-    if os.path.exists(_SYNC_STATE):
-        with open(_SYNC_STATE) as f:
+    if os.path.exists(_sync_state):
+        with open(_sync_state) as f:
             state = json.load(f)
     state["analysis_last_run"] = datetime.now(timezone.utc).isoformat()
     state["analysis_activities_count"] = len(df_enriched)
-    with open(_SYNC_STATE, "w") as f:
+    os.makedirs(os.path.dirname(_sync_state), exist_ok=True)
+    with open(_sync_state, "w") as f:
         json.dump(state, f, indent=2, ensure_ascii=False)
 
     # ── Résumé console ────────────────────────────────────────────────────────

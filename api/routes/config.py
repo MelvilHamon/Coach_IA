@@ -2,17 +2,18 @@
 api/routes/config.py — Endpoints configuration et état.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from api.deps import load_config, load_sync_state, load_activities, nan_safe
+from api.dependencies import get_current_user
 
 router = APIRouter(prefix="/api", tags=["config"])
 
 
 @router.get("/config")
-def read_config():
+def read_config(user: dict = Depends(get_current_user)):
     """Configuration athlète et seuils."""
-    cfg = load_config()
+    cfg = load_config(user["id"])
     return nan_safe({
         "athlete":    cfg.get("athlete", {}),
         "acwr":       cfg.get("acwr", {}),
@@ -21,10 +22,10 @@ def read_config():
 
 
 @router.get("/status")
-def read_status():
+def read_status(user: dict = Depends(get_current_user)):
     """État global : nombre d'activités, dernier sync, etc."""
-    df = load_activities()
-    state = load_sync_state()
+    df = load_activities(user["id"])
+    state = load_sync_state(user["id"])
 
     last_date = None
     if not df.empty:

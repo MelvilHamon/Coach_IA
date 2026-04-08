@@ -35,11 +35,12 @@ if _ANALYSE_DIR not in sys.path:
     sys.path.insert(0, _ANALYSE_DIR)
 
 from detect_fract_v2 import analyze_fractionne
+from sport_mapping import get_sport
 
 
-# Types d'activité Strava qui ne sont pas de la course à pied
-_NON_RUNNING_TYPES = {"Soccer", "Workout", "WeightTraining", "Yoga", "Crossfit",
-                      "RockClimbing", "Swim", "Ride", "VirtualRide", "Walk"}
+# Types d'activité Strava qui ne sont pas de la course à pied ni du vélo
+_NON_SPORT_TYPES = {"Soccer", "Workout", "WeightTraining", "Yoga", "Crossfit",
+                    "RockClimbing", "Swim", "Walk"}
 
 
 def detect_session_type(
@@ -76,19 +77,31 @@ def detect_session_type(
     tempo_z34_pct  = sess_cfg.get("tempo_z34_min_pct", 0.40)
 
     sport_type   = str(activity_row.get("Type", "Run"))
+    sport        = get_sport(sport_type)
     distance_km  = float(activity_row.get("Distance (km)", 0) or 0)
     duration_min = float(activity_row.get("Temps (min)", 0) or 0)
     elevation_m  = float(activity_row.get("Dénivelé (m)", 0) or 0)
     hr_mean_raw  = activity_row.get("Fréquence cardiaque (bpm)")
     hr_mean      = float(hr_mean_raw) if hr_mean_raw and not (isinstance(hr_mean_raw, float) and np.isnan(hr_mean_raw)) else None
 
-    # ── 1. Activités non-running ──────────────────────────────────────────────
+    # ── 1. Activités non-sport (ni run, ni vélo) ─────────────────────────────
     if sport_type == "Hike":
         return "randonnée"
-    if sport_type in _NON_RUNNING_TYPES:
+    if sport_type in _NON_SPORT_TYPES:
         return "autre"
 
-    # ── 2. Trail ──────────────────────────────────────────────────────────────
+    # ── 2. Classification VÉLO ───────────────────────────────────────────────
+    if sport == "velo":
+        return _classify_velo(
+            distance_km=distance_km,
+            duration_min=duration_min,
+            elevation_m=elevation_m,
+            hr_mean=hr_mean,
+            hr_max=hr_max,
+            config=cfg,
+        )
+
+    # ── 3. Trail (running uniquement) ────────────────────────────────────────
     if sport_type == "TrailRun":
         return "trail"
     if distance_km > 0:
@@ -96,7 +109,7 @@ def detect_session_type(
         if elev_per_km >= trail_elev_km:
             return "trail"
 
-    # ── 3. Fractionné (détection via stream) ─────────────────────────────────
+    # ── 4. Fractionné (détection via stream) ─────────────────────────────────
     min_effort_spd = float(speed_profile.get("p75_kmh", 0.0))
     if stream_path and os.path.exists(stream_path):
         try:
@@ -110,7 +123,7 @@ def detect_session_type(
         except Exception:
             pass  # en cas d'erreur de parsing, on continue avec les règles suivantes
 
-    # ── 4. Récupération active ────────────────────────────────────────────────
+    # ── 5. Récupération active ────────────────────────────────────────────────
     if hr_mean and duration_min > 0:
         if duration_min < recov_max_dur and hr_mean < hr_max * recov_max_hrp:
             return "récupération active"
@@ -118,15 +131,58 @@ def detect_session_type(
         # Pas de FC mais courte sortie légère
         return "récupération active"
 
-    # ── 5. Sortie longue ──────────────────────────────────────────────────────
+    # ── 6. Sortie longue ──────────────────────────────────────────────────────
     if distance_km >= long_run_km:
         return "sortie longue"
 
-    # ── 6. Tempo / seuil (basé sur FC moyenne) ───────────────────────────────
+    # ── 7. Tempo / seuil (basé sur FC moyenne) ───────────────────────────────
     if hr_mean:
         hr_pct = hr_mean / hr_max
         if hr_pct >= 0.80:
             return "tempo / seuil"
 
-    # ── 7. Endurance fondamentale (défaut pour tout run) ──────────────────────
+    # ── 8. Endurance fondamentale (défaut pour tout run) ──────────────────────
     return "endurance fondamentale"
+
+
+def _classify_velo(
+    distance_km: float,
+    duration_min: float,
+    elevation_m: float,
+    hr_mean: float | None,
+    hr_max: int,
+    config: dict,
+) -> str:
+    """
+    Classification des séances vélo.
+
+    Hiérarchie :
+      1. Récupération vélo : durée courte + FC basse
+      2. Sortie longue vélo : distance ≥ seuil (défaut 60 km)
+      3. Tempo vélo : FC ≥ 80% FC_max
+      4. Endurance vélo : défaut
+    """
+    velo_cfg = config.get("velo_classifier", {})
+    long_ride_km = velo_cfg.get("long_ride_threshold_km", 60.0)
+    recov_max_dur = velo_cfg.get("recovery_max_duration_min", 45)
+    recov_max_hrp = velo_cfg.get("recovery_max_hr_pct", 0.65)
+
+    # Récupération vélo
+    if hr_mean and duration_min > 0:
+        if duration_min < recov_max_dur and hr_mean < hr_max * recov_max_hrp:
+            return "récupération vélo"
+    elif duration_min > 0 and duration_min < recov_max_dur and distance_km < 15:
+        return "récupération vélo"
+
+    # Sortie longue vélo
+    if distance_km >= long_ride_km:
+        return "sortie longue vélo"
+
+    # Tempo vélo (FC élevée)
+    if hr_mean:
+        hr_pct = hr_mean / hr_max
+        if hr_pct >= 0.80:
+            return "tempo vélo"
+
+    # Endurance vélo (défaut)
+    return "endurance vélo"

@@ -36,34 +36,58 @@ _GARTH_DIR = os.path.join(_ROOT, ".garth")
 
 # ── Auth ───────────────────────────────────────────────────────────────────────
 
-def _garmin_login():
+def _garmin_login(garth_dir: str = None, garmin_creds: dict = None):
     """
     Retourne une instance Garmin authentifiée depuis le token persisté.
+    Si pas de token et garmin_creds fourni, tente un login email/password
+    et persiste les tokens.
 
-    Ne fait jamais de login email/password — utilise exclusivement le token
-    sauvegardé par garmin_auth.py. Charger un token depuis disque est une
-    opération locale (aucune requête HTTP) : pas de risque de déclencher MFA,
-    même appelé en boucle sur des centaines d'activités.
-
-    Si le token est absent ou invalide, lève RuntimeError avec instruction.
+    Parameters
+    ----------
+    garth_dir : répertoire des tokens garth (défaut: .garth/)
+    garmin_creds : dict avec email/password (optionnel, pour login initial)
     """
     from garminconnect import Garmin
 
-    if not os.path.isdir(_GARTH_DIR):
-        raise RuntimeError(
-            f"Token Garmin introuvable ({_GARTH_DIR}/)\n"
-            "Lancer une fois : python3 appelAPIs/garmin_auth.py"
-        )
+    _garth = garth_dir or _GARTH_DIR
 
-    try:
-        api = Garmin()
-        api.garth.load(_GARTH_DIR)
-        return api
-    except Exception as e:
-        raise RuntimeError(
-            f"Token Garmin invalide ou expiré : {e}\n"
-            "Relancer : python3 appelAPIs/garmin_auth.py"
-        ) from e
+    # Try loading existing tokens first
+    if os.path.isdir(_garth):
+        try:
+            api = Garmin()
+            api.garth.load(_garth)
+            return api
+        except Exception:
+            pass  # Tokens expired — try login below
+
+    # Login with credentials if available
+    if garmin_creds and garmin_creds.get("email") and garmin_creds.get("password"):
+        try:
+            api = Garmin(garmin_creds["email"], garmin_creds["password"])
+            api.login()
+            os.makedirs(_garth, exist_ok=True)
+            api.garth.dump(_garth)
+            return api
+        except Exception as e:
+            raise RuntimeError(f"Échec login Garmin : {e}") from e
+
+    # Fallback: try .env credentials
+    env_email = os.environ.get("GARMIN_EMAIL")
+    env_pass = os.environ.get("GARMIN_PASSWORD")
+    if env_email and env_pass:
+        try:
+            api = Garmin(env_email, env_pass)
+            api.login()
+            os.makedirs(_garth, exist_ok=True)
+            api.garth.dump(_garth)
+            return api
+        except Exception as e:
+            raise RuntimeError(f"Échec login Garmin (.env) : {e}") from e
+
+    raise RuntimeError(
+        f"Token Garmin introuvable ({_garth}/)\n"
+        "Configurez vos identifiants Garmin dans les paramètres."
+    )
 
 
 # ── GPX parsing ────────────────────────────────────────────────────────────────

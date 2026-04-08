@@ -34,8 +34,11 @@ import pandas as pd
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _CONFIG_PATH = os.path.join(_ROOT, "config.json")
 
-def load_config() -> dict:
-    with open(_CONFIG_PATH, encoding="utf-8") as f:
+def load_config(config_path: str = None) -> dict:
+    _path = config_path or _CONFIG_PATH
+    if not os.path.exists(_path):
+        return {}
+    with open(_path, encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -50,7 +53,7 @@ _ZONE_BOUNDS = [
 ]
 
 
-def compute_hr_zones(stream_df: pd.DataFrame, hr_max: int) -> dict:
+def compute_hr_zones(stream_df: pd.DataFrame, hr_max: int, hr_zones_custom: list = None) -> dict:
     """
     Calcule le temps passé dans chaque zone FC depuis les données stream.
 
@@ -58,12 +61,10 @@ def compute_hr_zones(stream_df: pd.DataFrame, hr_max: int) -> dict:
     Retourne un dict avec {z1_min, z2_min, ..., z1_pct, ..., dominant_zone}.
     Retourne {} si données insuffisantes.
 
-    Zones (Friel 2009) :
-        Z1 : < 60 % FC_max   — récupération
-        Z2 : 60-70 %         — endurance fondamentale
-        Z3 : 70-80 %         — tempo
-        Z4 : 80-90 %         — seuil lactique
-        Z5 : > 90 %          — VO2max / anaérobie
+    Parameters
+    ----------
+    hr_zones_custom : liste de 5 BPM [z1_max, z2_max, z3_max, z4_max, z5_max]
+                      Si fourni, utilise ces limites absolues au lieu de %FC_max.
     """
     if "bpm" not in stream_df.columns or stream_df["bpm"].isna().all():
         return {}
@@ -78,16 +79,28 @@ def compute_hr_zones(stream_df: pd.DataFrame, hr_max: int) -> dict:
     if total_s == 0:
         return {}
 
-    hr_pct = bpm_v / hr_max
+    # Build zone bounds in absolute BPM
+    if hr_zones_custom and len(hr_zones_custom) == 5:
+        bounds = [
+            ("z1", 0, hr_zones_custom[0]),
+            ("z2", hr_zones_custom[0], hr_zones_custom[1]),
+            ("z3", hr_zones_custom[1], hr_zones_custom[2]),
+            ("z4", hr_zones_custom[2], hr_zones_custom[3]),
+            ("z5", hr_zones_custom[3], hr_zones_custom[4]),
+        ]
+    else:
+        bounds = [(name, lo * hr_max, hi * hr_max) for name, lo, hi in _ZONE_BOUNDS]
+
     result = {}
-    for name, lo, hi in _ZONE_BOUNDS:
-        mask = (hr_pct >= lo) & (hr_pct < hi)
+    for name, lo, hi in bounds:
+        mask = (bpm_v >= lo) & (bpm_v < hi)
         zone_s = float(dt_v[mask].sum())
         result[f"{name}_min"] = round(zone_s / 60, 1)
         result[f"{name}_pct"] = round(zone_s / total_s * 100, 1)
 
     # Zone dominante (en % de temps)
-    pct_vals = {name: result[f"{name}_pct"] for name, _, _ in _ZONE_BOUNDS}
+    zone_names = ["z1", "z2", "z3", "z4", "z5"]
+    pct_vals = {name: result[f"{name}_pct"] for name in zone_names}
     result["dominant_zone"] = max(pct_vals, key=pct_vals.get)
 
     return result
@@ -786,7 +799,7 @@ def compute_monotony_strain(activities_df: pd.DataFrame) -> pd.DataFrame:
 
 # ── Personal Records (sliding window sur GPS) ───────────────────────────────
 
-_PR_DISTANCES = {
+_PR_DISTANCES_RUN = {
     "400m":  400,
     "1km":   1000,
     "1mi":   1609,
@@ -796,11 +809,24 @@ _PR_DISTANCES = {
     "marathon": 42195,
 }
 
+_PR_DISTANCES_VELO = {
+    "1km":   1000,
+    "5km":   5000,
+    "10km":  10000,
+    "20km":  20000,
+    "50km":  50000,
+    "100km": 100000,
+}
+
+# Keep backward compat alias
+_PR_DISTANCES = _PR_DISTANCES_RUN
+
 
 def compute_personal_records(
     gps_dir: str,
     garmin_streams_dir: str,
     activities_df: pd.DataFrame | None = None,
+    sport_filter: str = "run",
 ) -> dict:
     """
     Records personnels via sliding window sur les traces GPS.
@@ -811,9 +837,16 @@ def compute_personal_records(
         temps = time_s[j] - time_s[i]
         garder le min global.
 
+    sport_filter : "run" ou "velo" — filtre les activités et adapte les distances cibles.
+
     Retourne un dict { "400m": { time_s, pace, date, activity_id, source }, ... }
     """
     from gps_metrics import compute_distances
+    from sport_mapping import get_sport
+
+    pr_distances = _PR_DISTANCES_VELO if sport_filter == "velo" else _PR_DISTANCES_RUN
+    # Vitesse max plausible : 22 km/h running, 70 km/h vélo
+    max_speed_kmh = 70.0 if sport_filter == "velo" else 22.0
 
     # Map activity dates if available
     date_map = {}
@@ -832,11 +865,11 @@ def compute_personal_records(
         for sid, gid in strava_garmin_map.items():
             id_map[str(gid)] = sid
 
-    # Identifiant des activités running (pour filtrer les non-running)
-    running_ids = set()
+    # Filtrer les activités par sport
+    sport_ids = set()
     if activities_df is not None:
-        run_mask = activities_df["Type"].str.lower().str.contains("run", na=False)
-        running_ids = set(activities_df.loc[run_mask, "ID"].astype(int).astype(str))
+        sport_mask = activities_df["Type"].apply(lambda t: get_sport(str(t)) == sport_filter)
+        sport_ids = set(activities_df.loc[sport_mask, "ID"].astype(int).astype(str))
 
     # Collecter tous les fichiers GPS
     gps_files = []
@@ -849,7 +882,7 @@ def compute_personal_records(
                 stem = fname.replace(".json", "")
                 # Extraire le strava_id réel (supprime le prefix "strava_" s'il existe)
                 act_id = stem.replace("strava_", "") if stem.startswith("strava_") else stem
-                if running_ids and act_id not in running_ids:
+                if sport_ids and act_id not in sport_ids:
                     continue
                 gps_files.append((os.path.join(gps_dir, fname), act_id, "gps"))
 
@@ -859,13 +892,13 @@ def compute_personal_records(
             if fname.endswith(".json"):
                 gid = fname.replace(".json", "")
                 strava_id = id_map.get(gid)
-                if running_ids and strava_id and strava_id not in running_ids:
+                if sport_ids and strava_id and strava_id not in sport_ids:
                     continue
-                if running_ids and not strava_id:
+                if sport_ids and not strava_id:
                     continue
                 gps_files.append((os.path.join(garmin_streams_dir, fname), gid, "garmin"))
 
-    records = {dist_name: None for dist_name in _PR_DISTANCES}
+    records = {dist_name: None for dist_name in pr_distances}
 
     for fpath, file_id, source in gps_files:
         try:
@@ -905,7 +938,7 @@ def compute_personal_records(
 
         act_date = date_map.get(str(act_id), "")
 
-        for dist_name, target_m in _PR_DISTANCES.items():
+        for dist_name, target_m in pr_distances.items():
             if total_dist < target_m:
                 continue
 
@@ -922,9 +955,9 @@ def compute_personal_records(
                     best_time = elapsed
 
             if best_time is not None:
-                # Sanity check: speed must be < 22 km/h (plausible running)
+                # Sanity check: speed must be plausible for the sport
                 speed_kmh = (target_m / 1000) / (best_time / 3600)
-                if speed_kmh > 22:
+                if speed_kmh > max_speed_kmh:
                     continue
 
                 current = records[dist_name]
