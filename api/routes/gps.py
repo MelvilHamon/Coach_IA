@@ -325,3 +325,33 @@ def get_gps_bpm(activity_id: int, user: dict = Depends(get_current_user)):
         "bpm":        df["bpm"].tolist(),
         "distance_m": dist_m.tolist(),
     })
+
+
+@router.get("/{activity_id}/power")
+def get_gps_power(activity_id: int, user: dict = Depends(get_current_user)):
+    """Puissance (watts) alignée sur la distance (km) depuis le stream Strava."""
+    stream_df = get_stream(activity_id, user["id"])
+    if stream_df is None or "power_w" not in stream_df.columns:
+        return {"error": "no_power", "power_w": [], "distance_m": []}
+
+    import numpy as np
+
+    df = stream_df.dropna(subset=["power_w"]).copy()
+    if df.empty:
+        return {"error": "no_power", "power_w": [], "distance_m": []}
+
+    time_s = df["time_s"].values
+    speed_kmh = df["speed_kmh"].values if "speed_kmh" in df.columns else None
+
+    if speed_kmh is not None:
+        speed_ms = np.nan_to_num(speed_kmh, nan=0.0) / 3.6
+        dt = np.diff(time_s, prepend=time_s[0])
+        dt[0] = 0
+        dist_m = np.cumsum(speed_ms * dt)
+    else:
+        dist_m = np.linspace(0, 1000, len(df))
+
+    return nan_safe({
+        "power_w":    df["power_w"].tolist(),
+        "distance_m": dist_m.tolist(),
+    })

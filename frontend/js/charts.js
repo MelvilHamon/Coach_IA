@@ -444,7 +444,7 @@ export function plotZones(container, zones) {
 
   const labels = Object.keys(zones).map(z => z.toUpperCase());
   const values = Object.values(zones).map(z => z.pct);
-  const colors = ['#BFDBFE', '#93C5FD', '#60A5FA', '#3B82F6', '#1D4ED8'];
+  const colors = ['#9CA3AF', '#22D3EE', '#22C55E', '#F97316', '#EF4444'];
 
   const traces = [{
     labels, values,
@@ -485,10 +485,10 @@ function _blockShapes(blocks, yRange) {
     x0: b.start_km, x1: b.end_km,
     y0: yRange[0], y1: yRange[1],
     fillcolor: b.type === 'effort'
-      ? 'rgba(37, 99, 235, 0.15)'
-      : 'rgba(45, 106, 79, 0.10)',
+      ? 'rgba(249, 115, 22, 0.18)'
+      : 'rgba(168, 85, 247, 0.12)',
     line: {
-      color: b.type === 'effort' ? COLORS.accent : COLORS.success,
+      color: b.type === 'effort' ? '#F97316' : '#A855F7',
       width: 1.5,
       dash: b.type === 'effort' ? 'solid' : 'dot',
     },
@@ -707,10 +707,11 @@ export function enableBlockSelect(plotEl, onBlock, blockType = 'effort') {
  * @param {number[]|null} bpm — bpm array (same length), optional
  * @returns {{ distance_m, avg_pace_s, pace_display, avg_speed_kmh, avg_bpm }}
  */
-export function computeBlockMetrics(block, distKm, speedKmh, bpm) {
+export function computeBlockMetrics(block, distKm, speedKmh, bpm, powerW) {
   const mask = distKm.map((d, i) => d >= block.start_km && d <= block.end_km);
   const speeds = speedKmh.filter((_, i) => mask[i] && speedKmh[i] > 0.5);
   const bpms = bpm ? bpm.filter((_, i) => mask[i] && bpm[i] > 0) : [];
+  const powers = powerW ? powerW.filter((_, i) => mask[i] && powerW[i] != null && powerW[i] > 0) : [];
 
   const distance_m = Math.round((block.end_km - block.start_km) * 1000);
   const avg_speed = speeds.length ? speeds.reduce((a, b) => a + b, 0) / speeds.length : 0;
@@ -719,6 +720,7 @@ export function computeBlockMetrics(block, distKm, speedKmh, bpm) {
   const ps = Math.round(avg_pace_s % 60);
   const pace_display = avg_speed > 0 ? `${pm}:${String(ps).padStart(2, '0')}` : '—';
   const avg_bpm = bpms.length ? Math.round(bpms.reduce((a, b) => a + b, 0) / bpms.length) : null;
+  const avg_power_w = powers.length ? Math.round(powers.reduce((a, b) => a + b, 0) / powers.length) : null;
 
   // Estimate duration from distance / avg speed
   const duration_s = avg_speed > 0 ? (distance_m / 1000) / avg_speed * 3600 : 0;
@@ -726,11 +728,11 @@ export function computeBlockMetrics(block, distKm, speedKmh, bpm) {
   const durSec = Math.round(duration_s % 60);
   const duration_display = `${durMin}:${String(durSec).padStart(2, '0')}`;
 
-  return { distance_m, avg_pace_s, pace_display, avg_speed_kmh: Math.round(avg_speed * 10) / 10, avg_bpm, duration_s, duration_display };
+  return { distance_m, avg_pace_s, pace_display, avg_speed_kmh: Math.round(avg_speed * 10) / 10, avg_bpm, avg_power_w, duration_s, duration_display };
 }
 
 /**
- * Redraw block shapes on an existing plotSpeed chart.
+ * Redraw block shapes on an existing plotSpeed or plotPower chart.
  */
 export function updateBlockShapes(plotEl, blocks) {
   if (!plotEl._caData) return;
@@ -819,6 +821,69 @@ export function plotBpm(container, bpmData, altData) {
   }
 
   safePlot(container, traces, layout, PLOTLY_CONFIG);
+}
+
+
+// ── Power chart ─────────────────────────────────────────────────────────────
+
+export function plotPower(container, powerData, altData, opts = {}) {
+  if (!powerData.power_w || !powerData.power_w.length) return;
+
+  const dist = powerData.distance_m.map(d => d / 1000);
+  const traces = [];
+
+  // Altitude background trace (yaxis2)
+  if (altData && altData.altitude_m?.length) {
+    const altDist = altData.distance_m.map(d => d / 1000);
+    traces.push({
+      x: altDist, y: altData.altitude_m,
+      type: 'scatter', mode: 'lines', fill: 'tozeroy',
+      fillcolor: 'rgba(120, 116, 112, 0.08)',
+      line: { color: 'rgba(120, 116, 112, 0.20)', width: 1 },
+      yaxis: 'y2', showlegend: false, hoverinfo: 'skip',
+    });
+  }
+
+  const validPow = powerData.power_w.filter(p => p != null && p > 0);
+  const powMax = validPow.length ? Math.max(...validPow) : 400;
+  const powPad = 20;
+  const yRange = [0, powMax + powPad];
+
+  const blocks = opts.blocks || [];
+
+  // Power main trace — orange color scheme
+  traces.push({
+    x: dist, y: powerData.power_w,
+    type: 'scatter', mode: 'lines',
+    line: { color: '#EA580C', width: 1.5 },
+    fill: 'tozeroy', fillcolor: 'rgba(234, 88, 12, 0.08)',
+    showlegend: false,
+  });
+
+  const layout = {
+    ...BASE_LAYOUT, height: 260,
+    margin: { l: 52, r: 28, t: 12, b: 36 },
+    xaxis: { ...AX, title: { text: 'km', font: { family: FONT, size: 12, color: COLORS.inkLight } } },
+    yaxis: {
+      ...AX,
+      title: { text: 'watts', font: { family: FONT, size: 12, color: COLORS.inkLight } },
+      range: yRange,
+    },
+    shapes: _blockShapes(blocks, yRange),
+    dragmode: false,
+  };
+
+  if (altData && altData.altitude_m?.length) {
+    layout.yaxis2 = {
+      overlaying: 'y', side: 'right',
+      showgrid: false, showticklabels: false, zeroline: false,
+    };
+  }
+
+  safePlot(container, traces, layout, PLOTLY_CONFIG);
+
+  // Store data refs for drag interaction
+  container._caData = { dist, powerW: powerData.power_w, yRange };
 }
 
 

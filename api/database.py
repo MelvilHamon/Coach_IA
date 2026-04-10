@@ -128,7 +128,8 @@ def init_tables():
                 hr_z2_max    INTEGER,
                 hr_z3_max    INTEGER,
                 hr_z4_max    INTEGER,
-                hr_z5_max    INTEGER
+                hr_z5_max    INTEGER,
+                weight_kg    REAL
             )
         """))
 
@@ -143,6 +144,13 @@ def init_tables():
                 strava_token_expires_at INTEGER
             )
         """))
+
+    # Migrations: add columns that may not exist in older databases
+    with engine.begin() as conn:
+        try:
+            conn.execute(text("ALTER TABLE user_profiles ADD COLUMN weight_kg REAL"))
+        except Exception:
+            pass  # Column already exists
 
     # Create indexes for performance
     with engine.begin() as conn:

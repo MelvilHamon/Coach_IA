@@ -20,6 +20,7 @@ import time
 from contextlib import redirect_stdout
 from datetime import datetime, timezone
 
+import numpy as np
 import pandas as pd
 from fastapi import APIRouter, Depends
 
@@ -137,8 +138,9 @@ def _count_csv_rows(paths: UserPaths) -> int:
     if not os.path.exists(p):
         return 0
     try:
-        df = pd.read_csv(p)
-        return len(df)
+        # Compter les lignes sans charger tout le DataFrame
+        with open(p, encoding="utf-8-sig") as f:
+            return sum(1 for _ in f) - 1  # -1 pour le header
     except Exception:
         return 0
 
@@ -326,6 +328,12 @@ def match_strava_garmin(paths: UserPaths) -> dict:
 
     used_strava_ids = set(existing_gps)
 
+    # Pré-calculer les arrays numpy pour le matching vectorisé
+    strava_ids = strava_df["ID"].astype(int).values
+    strava_dates_epoch = strava_df["_date"].astype("int64").values // 10**9  # epoch seconds
+    strava_dur = strava_df["_dur_s"].values
+    strava_dist = strava_df["_dist_m"].values
+
     for gact in garmin_acts:
         gid = int(gact.get("garmin_id", 0))
         if gid == 0:
@@ -345,29 +353,23 @@ def match_strava_garmin(paths: UserPaths) -> dict:
 
         g_dur_s = float(gact.get("duration_s", 0))
         g_dist_m = float(gact.get("distance_m", 0))
+        g_epoch = int(g_date.timestamp())
 
-        best_strava_id = None
-        best_dt = float("inf")
+        # Matching vectorisé : filtrer d'un coup au lieu de boucler
+        mask_available = np.array([sid not in used_strava_ids for sid in strava_ids])
+        dt_diffs = np.abs(strava_dates_epoch - g_epoch)
+        dur_diffs = np.abs(strava_dur - g_dur_s)
+        dist_diffs = np.abs(strava_dist - g_dist_m)
 
-        for _, srow in strava_df.iterrows():
-            sid = int(srow["ID"])
-            if sid in used_strava_ids:
-                continue
+        mask = mask_available & (dt_diffs <= 14400) & (dur_diffs <= 120) & (dist_diffs <= 200)
 
-            dt_diff = abs((srow["_date"] - g_date).total_seconds())
-            if dt_diff > 14400:
-                continue
-            if abs(srow["_dur_s"] - g_dur_s) > 120:
-                continue
-            if abs(srow["_dist_m"] - g_dist_m) > 200:
-                continue
-
-            if dt_diff < best_dt:
-                best_dt = dt_diff
-                best_strava_id = sid
-
-        if best_strava_id is None:
+        if not mask.any():
             continue
+
+        # Parmi les candidats, prendre celui avec le plus petit écart temporel
+        candidates_idx = np.where(mask)[0]
+        best_idx = candidates_idx[np.argmin(dt_diffs[candidates_idx])]
+        best_strava_id = int(strava_ids[best_idx])
 
         if best_strava_id in existing_gps:
             already_matched += 1
@@ -617,6 +619,8 @@ def _run_pipeline(user_id: str):
                 athlete["hr_threshold"] = user_profile["hr_threshold"]
             if user_profile.get("gender"):
                 athlete["sex"] = user_profile["gender"]
+            if user_profile.get("weight_kg"):
+                athlete["weight_kg"] = user_profile["weight_kg"]
 
             # Custom zones
             custom_zones = []

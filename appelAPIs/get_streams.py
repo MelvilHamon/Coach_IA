@@ -11,6 +11,8 @@ import requests
 import pandas as pd
 from datetime import datetime, timezone
 
+from strava_rate_limiter import strava_get, get_rate_limit_status
+
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 CSV_PATH = os.path.join(DATA_DIR, "mes_activites_strava.csv")
 STREAMS_DIR = os.path.join(DATA_DIR, "streams")
@@ -21,9 +23,9 @@ SYNC_STATE_PATH = os.path.join(DATA_DIR, "sync_state.json")
 
 def get_streams(activity_id, access_token):
     url = f"https://www.strava.com/api/v3/activities/{activity_id}/streams"
-    params = {"keys": "time,velocity_smooth,heartrate,altitude", "key_by_type": "true"}
+    params = {"keys": "time,velocity_smooth,heartrate,altitude,watts", "key_by_type": "true"}
     headers = {"Authorization": f"Bearer {access_token}"}
-    r = requests.get(url, headers=headers, params=params)
+    r = strava_get(url, headers=headers, params=params)
     if r.status_code == 404:
         return None
     r.raise_for_status()
@@ -35,13 +37,17 @@ def streams_to_df(streams_json):
     speed = streams_json.get("velocity_smooth", {}).get("data", [])
     hr = streams_json.get("heartrate", {}).get("data", [])
     alt = streams_json.get("altitude", {}).get("data", [])
+    watts = streams_json.get("watts", {}).get("data", [])
     n = len(time_data)
-    return pd.DataFrame({
+    df = pd.DataFrame({
         "time_s": time_data,
         "speed_kmh": [v * 3.6 for v in speed] if speed else [None] * n,
         "bpm": hr if hr else [None] * n,
         "altitude_m": alt if alt else [None] * n,
     })
+    if watts:
+        df["power_w"] = watts
+    return df
 
 
 def save_streams(df, activity_id, streams_dir: str = None):
@@ -130,9 +136,12 @@ def sync_all_streams(data_dir: str = None, access_token: str = None):
             print(f"  [{i}/{len(to_fetch)}] {activity_id} — ERREUR : {e}")
             errors += 1
 
-        time.sleep(0.5)
+        # Le rate limiter gère le délai automatiquement
 
+    status = get_rate_limit_status()
     print(f"\nSync streams terminé : {ok} OK, {skipped} sans GPS, {errors} erreur(s)")
+    print(f"  Rate limits — 15min: {status['usage_15min']}/{status['limit_15min']}, "
+          f"jour: {status['usage_daily']}/{status['limit_daily']}")
 
     state = _load_sync_state_from(_sync_state_path)
     state["streams_last_sync"] = datetime.now(timezone.utc).isoformat()

@@ -12,6 +12,8 @@ import requests
 import pandas as pd
 from datetime import datetime, timezone
 
+from strava_rate_limiter import strava_get, get_rate_limit_status
+
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 CSV_PATH = os.path.join(DATA_DIR, "mes_activites_strava.csv")
 SYNC_STATE_PATH = os.path.join(DATA_DIR, "sync_state.json")
@@ -26,7 +28,7 @@ def _fetch_page(token, page, per_page=100, before=None, after=None):
         params["before"] = int(before)
     if after is not None:
         params["after"] = int(after)
-    response = requests.get(
+    response = strava_get(
         "https://www.strava.com/api/v3/athlete/activities",
         headers=headers,
         params=params,
@@ -56,7 +58,7 @@ def get_all_new_activities(token, existing_ids, per_page=100):
             break
 
         page += 1
-        time.sleep(0.3)
+        # Le rate limiter gère le délai automatiquement
 
     return all_new
 
@@ -84,7 +86,6 @@ def backfill_activities(token, existing_ids, after_date="2023-01-01", per_page=1
             break
 
         page += 1
-        time.sleep(0.3)
 
     print(f"Backfill depuis {after_date} : {len(all_new)} nouvelles activités trouvées")
     return all_new
@@ -92,7 +93,7 @@ def backfill_activities(token, existing_ids, after_date="2023-01-01", per_page=1
 
 def get_activity_description(activity_id, token):
     headers = {"Authorization": f"Bearer {token}"}
-    response = requests.get(
+    response = strava_get(
         f"https://www.strava.com/api/v3/activities/{activity_id}",
         headers=headers,
     )
@@ -123,9 +124,8 @@ def format_activities(activities, token):
             "Dénivelé (m)": act.get("total_elevation_gain", 0),
             "Fréquence cardiaque (bpm)": act.get("average_heartrate"),
             "Type": act.get("sport_type") or act.get("type", ""),
-            "Commentaire": get_activity_description(act["id"], token),
+            "Commentaire": "",
         })
-        time.sleep(0.2)
 
     return pd.DataFrame(rows)
 
@@ -191,6 +191,10 @@ def sync_activities(data_dir: str = None, access_token: str = None):
         df_combined = df_combined.sort_values("Date", ascending=True)
         df_combined.to_csv(_csv_path, index=False, encoding="utf-8-sig")
         print(f"{len(df_new)} nouvelles activités ajoutées → {_csv_path}")
+
+    status = get_rate_limit_status()
+    print(f"  Rate limits — 15min: {status['usage_15min']}/{status['limit_15min']}, "
+          f"jour: {status['usage_daily']}/{status['limit_daily']}")
 
     state = _load_sync_state_from(_sync_state_path)
     state["strava_last_sync"] = datetime.now(timezone.utc).isoformat()

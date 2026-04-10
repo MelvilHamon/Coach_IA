@@ -40,9 +40,10 @@ export async function renderSettings(container) {
 
   // ── Profil physiologique ──
   const genderSelect = el('select', { className: 'ca-input', style: { width: '160px' } },
-    el('option', { value: 'male', selected: profile.gender !== 'female' }, 'Homme'),
-    el('option', { value: 'female', selected: profile.gender === 'female' }, 'Femme'),
+    el('option', { value: 'male' }, 'Homme'),
+    el('option', { value: 'female' }, 'Femme'),
   );
+  genderSelect.value = profile.gender === 'female' ? 'female' : 'male';
 
   const hrInput = (placeholder, key) => {
     const inp = el('input', {
@@ -56,6 +57,12 @@ export async function renderSettings(container) {
   const hrMax = hrInput('FC max', 'hr_max');
   const hrRest = hrInput('FC repos', 'hr_rest');
   const hrThreshold = hrInput('FC seuil', 'hr_threshold');
+
+  const weightInput = el('input', {
+    type: 'number', className: 'ca-input', placeholder: 'Poids (kg)',
+    style: { width: '120px' }, min: '30', max: '200', step: '0.1',
+  });
+  if (profile.weight_kg) weightInput.value = profile.weight_kg;
 
   const zoneInput = (label, key) => {
     const inp = el('input', {
@@ -88,6 +95,7 @@ export async function renderSettings(container) {
         hr_z3_max: z3.value ? parseInt(z3.value) : null,
         hr_z4_max: z4.value ? parseInt(z4.value) : null,
         hr_z5_max: z5.value ? parseInt(z5.value) : null,
+        weight_kg: weightInput.value ? parseFloat(weightInput.value) : null,
       };
       profileBtn.textContent = 'Enregistrement…';
       profileBtn.disabled = true;
@@ -122,6 +130,7 @@ export async function renderSettings(container) {
       el('label', { style: { fontSize: '12px' } }, 'FC max : '), hrMax,
       el('label', { style: { fontSize: '12px' } }, 'FC repos : '), hrRest,
       el('label', { style: { fontSize: '12px' } }, 'FC seuil : '), hrThreshold,
+      el('label', { style: { fontSize: '12px' } }, 'Poids : '), weightInput,
     ),
     el('div', { style: { marginTop: '12px' } },
       el('div', { className: 'ca-settings-explain', style: { marginBottom: '8px' } },

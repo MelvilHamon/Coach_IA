@@ -49,6 +49,7 @@ class UserProfileBody(BaseModel):
     hr_z3_max: int | None = None
     hr_z4_max: int | None = None
     hr_z5_max: int | None = None
+    weight_kg: float | None = None
 
 
 # ── Public endpoints (no auth required) ───────────────────────────────────────

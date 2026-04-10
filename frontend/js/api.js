@@ -60,6 +60,7 @@ export const api = {
   gpsAltitude: (id) => _fetch(`/api/gps/${id}/altitude`),
   gpsGap:      (id) => _fetch(`/api/gps/${id}/gap`),
   gpsBpm:      (id) => _fetch(`/api/gps/${id}/bpm`),
+  gpsPower:    (id) => _fetch(`/api/gps/${id}/power`),
   gpsSplits:   (id) => _fetch(`/api/gps/${id}/splits`),
   sessionAnalysis: (id) => _fetch(`/api/gps/${id}/session-analysis`),
 

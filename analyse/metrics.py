@@ -577,16 +577,24 @@ def compute_progression_metrics(
     Colonnes retournées :
       - pace_trend_28d  : variation allure moy. sur 28j (s/km, négatif = progrès)
       - ef_trend_28d    : variation EF moy. sur 28j (positif = progrès)
-      - vo2max_estimate : estimation VO2max (Daniels simplifié), NaN si non calculable
+      - vo2max_estimate : estimation VO2max, NaN si non calculable
 
-    VO2max (Daniels simplifié, applicable allure + FC) :
+    VO2max Course (Daniels simplifié, applicable allure + FC) :
       %VO2max = %FC_max² × 0.8 + %FC_max × 0.2
       VO2max  = speed_m_min / (0.000104 × speed² + 0.182258 × speed - 4.6) / %VO2max
     Calculé uniquement si FC disponible et session_type ∈ endurance fondamentale,
     tempo / seuil, sortie longue.
+
+    VO2max Vélo (ACSM metabolic equation) :
+      VO2 = (power_w / weight_kg) × 10.8 + 7   (mL/kg/min)
+      VO2max = VO2 / %VO2max
+    Calculé uniquement si puissance moyenne et poids disponibles.
     """
-    hr_max = (config or {}).get("athlete", {}).get("hr_max", 195)
-    _VO2_TYPES = {"endurance fondamentale", "tempo / seuil", "sortie longue"}
+    athlete = (config or {}).get("athlete", {})
+    hr_max = athlete.get("hr_max", 195)
+    weight_kg = athlete.get("weight_kg")
+    _VO2_RUN_TYPES = {"endurance fondamentale", "tempo / seuil", "sortie longue"}
+    _VO2_VELO_TYPES = {"endurance vélo", "sortie longue vélo", "tempo vélo"}
 
     df = activities_df.copy()
     df["_dt"]    = pd.to_datetime(df["Date"], utc=True)
@@ -602,24 +610,35 @@ def compute_progression_metrics(
         dur_min  = float(row.get("Temps (min)", 0) or 0)
         hr_raw   = row.get("Fréquence cardiaque (bpm)")
         hr_mean  = float(hr_raw) if hr_raw and not (isinstance(hr_raw, float) and np.isnan(hr_raw)) else None
+        sport    = str(row.get("sport", ""))
+        avg_pow  = row.get("avg_power_w")
+        has_power = avg_pow is not None and not (isinstance(avg_pow, float) and np.isnan(avg_pow)) and avg_pow > 0
 
-        if stype not in _VO2_TYPES or hr_mean is None or dist_km <= 0 or dur_min <= 0:
-            vo2max_vals.append(float("nan"))
-            continue
+        # ── VO2max Course (Daniels) ──
+        if stype in _VO2_RUN_TYPES and hr_mean and dist_km > 0 and dur_min > 0:
+            speed_kmh    = dist_km / (dur_min / 60.0)
+            speed_m_min  = speed_kmh * 1000.0 / 60.0
+            pct_fc_max   = hr_mean / hr_max
+            pct_vo2max   = pct_fc_max ** 2 * 0.8 + pct_fc_max * 0.2
+            vo2_at_pace  = 0.000104 * speed_m_min ** 2 + 0.182258 * speed_m_min - 4.6
 
-        speed_kmh    = dist_km / (dur_min / 60.0)
-        speed_m_min  = speed_kmh * 1000.0 / 60.0
-        pct_fc_max   = hr_mean / hr_max
-        pct_vo2max   = pct_fc_max ** 2 * 0.8 + pct_fc_max * 0.2
-        # VO2 au rythme actuel (formule Daniels, v en m/min → mL/kg/min)
-        vo2_at_pace = 0.000104 * speed_m_min ** 2 + 0.182258 * speed_m_min - 4.6
+            if vo2_at_pace > 0 and pct_vo2max > 0:
+                vo2max = vo2_at_pace / pct_vo2max
+                vo2max_vals.append(round(float(np.clip(vo2max, 20, 90)), 1))
+                continue
 
-        if vo2_at_pace <= 0 or pct_vo2max <= 0:
-            vo2max_vals.append(float("nan"))
-            continue
+        # ── VO2max Vélo (ACSM: power/weight) ──
+        if stype in _VO2_VELO_TYPES and has_power and weight_kg and weight_kg > 0 and hr_mean:
+            pct_fc_max = hr_mean / hr_max
+            pct_vo2max = pct_fc_max ** 2 * 0.8 + pct_fc_max * 0.2
+            # ACSM metabolic equation for cycling (mL/kg/min)
+            vo2_at_power = (float(avg_pow) / weight_kg) * 10.8 + 7.0
+            if pct_vo2max > 0:
+                vo2max = vo2_at_power / pct_vo2max
+                vo2max_vals.append(round(float(np.clip(vo2max, 20, 100)), 1))
+                continue
 
-        vo2max = vo2_at_pace / pct_vo2max
-        vo2max_vals.append(round(float(np.clip(vo2max, 20, 90)), 1))
+        vo2max_vals.append(float("nan"))
 
     df["_vo2max"] = vo2max_vals
 

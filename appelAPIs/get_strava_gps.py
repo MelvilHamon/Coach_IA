@@ -21,6 +21,8 @@ import sys
 
 import requests
 
+from strava_rate_limiter import strava_get
+
 _ROOT     = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _GPS_DIR  = os.path.join(_ROOT, "data", "gps")
 
@@ -54,7 +56,7 @@ def fetch_strava_gps(
             return json.load(f)
 
     headers = {"Authorization": f"Bearer {access_token}"}
-    r = requests.get(
+    r = strava_get(
         f"https://www.strava.com/api/v3/activities/{activity_id}/streams",
         headers=headers,
         params={"keys": "latlng,altitude,time", "key_by_type": "true"},

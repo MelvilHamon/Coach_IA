@@ -62,7 +62,7 @@ from sport_mapping import get_sport
 
 _ENRICHED_COLS = [
     "sport",
-    "trimp", "hrtss",
+    "trimp", "hrtss", "avg_power_w",
     "z1_min", "z2_min", "z3_min", "z4_min", "z5_min",
     "z1_pct", "z2_pct", "z3_pct", "z4_pct", "z5_pct",
     "dominant_zone",
@@ -158,6 +158,12 @@ def _compute_activity_metrics(row: pd.Series, config: dict, streams_dir: str = N
         # Découplag aérobie
         result["decoupling_pct"] = compute_decoupling(stream_df)
 
+        # Puissance moyenne (vélo avec capteur de puissance)
+        if "power_w" in stream_df.columns:
+            valid_power = stream_df["power_w"].dropna()
+            if len(valid_power) > 0:
+                result["avg_power_w"] = round(float(valid_power.mean()), 1)
+
     # ── Type de séance ────────────────────────────────────────────────────────
     result["session_type"] = detect_session_type(row, stream_path=stream_path, config=config)
 
@@ -246,43 +252,68 @@ def run_analysis(force: bool = False, data_dir: str = None, config_path: str = N
 
     df_metrics = pd.DataFrame(metrics_rows, index=df.index)
 
-    # ── Métriques de séries temporelles (toujours recalculées) ───────────────
-    print("\nCalcul ACWR et métriques hebdomadaires…")
+    # ── Métriques de séries temporelles PAR SPORT (toujours recalculées) ─────
+    # Chaque sport (run, velo, autre) a ses propres ACWR, volume hebdo, etc.
+    # pour ne pas mélanger course et vélo dans les indicateurs.
+    print("\nCalcul ACWR et métriques hebdomadaires (par sport)…")
 
     df_metrics["trimp_filled"] = df_metrics["trimp"].fillna(0)
-    df_for_acwr = df.copy()
-    df_for_acwr["trimp"] = df_metrics["trimp_filled"].values
 
-    df_metrics["acwr_km"] = compute_acwr(df, metric="km").values
+    # Colonnes à initialiser avant le groupby
+    for _col in ["acwr_km", "weekly_km", "weekly_elevation_m", "load_variation_pct",
+                 "injury_risk_score", "injury_risk_label",
+                 "flag_acwr", "flag_monotony", "flag_load_spike", "flag_consecutive",
+                 "pace_trend_28d", "ef_trend_28d", "vo2max_estimate",
+                 "ctl", "atl", "tsb", "monotony", "strain"]:
+        df_metrics[_col] = np.nan
+    df_metrics["injury_risk_label"] = ""
 
-    weekly = compute_weekly_metrics(df)
-    df_metrics["weekly_km"]          = weekly["weekly_km"].values
-    df_metrics["weekly_elevation_m"] = weekly["weekly_elevation_m"].values
-    df_metrics["load_variation_pct"] = weekly["load_variation_pct"].values
+    sports = df_metrics["sport"].unique()
+    for _sport in sports:
+        sport_mask = df_metrics["sport"] == _sport
+        df_sport = df[sport_mask].copy()
+        df_metrics_sport = df_metrics[sport_mask].copy()
 
-    # Assemblage intermédiaire : nécessaire pour injury_risk et progression
-    # qui consomment acwr_km, load_variation_pct, trimp, session_type
-    df_enriched_tmp = pd.concat([df, df_metrics[_ENRICHED_COLS[:_ENRICHED_COLS.index("injury_risk_score")]]], axis=1)
+        if df_sport.empty:
+            continue
 
-    print("Calcul risque blessure et métriques de progression…")
-    injury = compute_injury_risk(df_enriched_tmp, config=config)
-    for col in ["injury_risk_score", "injury_risk_label",
-                "flag_acwr", "flag_monotony", "flag_load_spike", "flag_consecutive"]:
-        df_metrics[col] = injury[col].values
+        print(f"  [{_sport}] {sport_mask.sum()} activités")
 
-    progression = compute_progression_metrics(df_enriched_tmp, config=config)
-    for col in ["pace_trend_28d", "ef_trend_28d", "vo2max_estimate"]:
-        df_metrics[col] = progression[col].values
+        # ACWR par sport
+        df_metrics.loc[sport_mask, "acwr_km"] = compute_acwr(df_sport, metric="km").values
 
-    print("Calcul Fitness/Fatigue/Form (Banister EWMA)…")
-    ff = compute_fitness_fatigue(df_enriched_tmp)
-    for col in ["ctl", "atl", "tsb"]:
-        df_metrics[col] = ff[col].values
+        # Volume hebdo par sport
+        weekly = compute_weekly_metrics(df_sport)
+        df_metrics.loc[sport_mask, "weekly_km"]          = weekly["weekly_km"].values
+        df_metrics.loc[sport_mask, "weekly_elevation_m"] = weekly["weekly_elevation_m"].values
+        df_metrics.loc[sport_mask, "load_variation_pct"] = weekly["load_variation_pct"].values
 
-    print("Calcul Monotony & Strain (Foster 1998)…")
-    ms = compute_monotony_strain(df_enriched_tmp)
-    for col in ["monotony", "strain"]:
-        df_metrics[col] = ms[col].values
+        # Assemblage intermédiaire par sport
+        enriched_cols_before_injury = _ENRICHED_COLS[:_ENRICHED_COLS.index("injury_risk_score")]
+        df_enriched_sport = pd.concat([df_sport, df_metrics.loc[sport_mask, enriched_cols_before_injury]], axis=1)
+
+        # Risque blessure par sport
+        injury = compute_injury_risk(df_enriched_sport, config=config)
+        for col in ["injury_risk_score", "injury_risk_label",
+                    "flag_acwr", "flag_monotony", "flag_load_spike", "flag_consecutive"]:
+            df_metrics.loc[sport_mask, col] = injury[col].values
+
+        # Progression par sport
+        progression = compute_progression_metrics(df_enriched_sport, config=config)
+        for col in ["pace_trend_28d", "ef_trend_28d", "vo2max_estimate"]:
+            df_metrics.loc[sport_mask, col] = progression[col].values
+
+        # Fitness/Fatigue/Form par sport
+        ff = compute_fitness_fatigue(df_enriched_sport)
+        for col in ["ctl", "atl", "tsb"]:
+            df_metrics.loc[sport_mask, col] = ff[col].values
+
+        # Monotony & Strain par sport
+        ms = compute_monotony_strain(df_enriched_sport)
+        for col in ["monotony", "strain"]:
+            df_metrics.loc[sport_mask, col] = ms[col].values
+
+    print("Calcul par sport terminé.")
 
     # ── Assemblage final ──────────────────────────────────────────────────────
     df_enriched = pd.concat([df, df_metrics[_ENRICHED_COLS]], axis=1)
@@ -363,7 +394,8 @@ def _print_summary(df: pd.DataFrame, config: dict) -> None:
         print(f"    {stype:<30} {n:>3} séances")
 
     # Alertes volume
-    alerts = df[df["load_variation_pct"].notna() & (df["load_variation_pct"].abs() > 30)]
+    _lv = pd.to_numeric(df["load_variation_pct"], errors="coerce")
+    alerts = df[_lv.notna() & (_lv.abs() > 30)]
     if not alerts.empty:
         print(f"\n  ⚠️  {len(alerts)} semaine(s) avec variation de charge > 30% :")
         for _, r in alerts.tail(3).iterrows():
@@ -379,5 +411,47 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Analyse enrichie des activités Strava")
     parser.add_argument("--force", action="store_true",
                         help="Recalculer toutes les métriques (ignore le cache)")
+    parser.add_argument("--user", type=str, default=None,
+                        help="ID utilisateur spécifique (sinon tous les utilisateurs)")
     args = parser.parse_args()
-    run_analysis(force=args.force)
+
+    _users_dir = os.path.join(_ROOT, "data", "users")
+
+    if args.user:
+        # Un seul utilisateur
+        user_dir = os.path.join(_users_dir, args.user)
+        config_path = os.path.join(user_dir, "config.json")
+        if not os.path.isdir(user_dir):
+            print(f"ERREUR : répertoire utilisateur introuvable : {user_dir}")
+            sys.exit(1)
+        print(f"\n{'#' * 60}")
+        print(f"# Utilisateur : {args.user}")
+        print(f"{'#' * 60}\n")
+        run_analysis(force=args.force, data_dir=user_dir, config_path=config_path)
+    else:
+        # Tous les utilisateurs
+        if not os.path.isdir(_users_dir):
+            print(f"Aucun répertoire utilisateurs trouvé ({_users_dir}), lancement legacy…")
+            run_analysis(force=args.force)
+        else:
+            user_ids = sorted(d for d in os.listdir(_users_dir)
+                              if os.path.isdir(os.path.join(_users_dir, d)))
+            if not user_ids:
+                print("Aucun utilisateur trouvé.")
+                sys.exit(0)
+            print(f"Utilisateurs trouvés : {len(user_ids)}\n")
+            for uid in user_ids:
+                user_dir = os.path.join(_users_dir, uid)
+                config_path = os.path.join(user_dir, "config.json")
+                csv_path = os.path.join(user_dir, "mes_activites_strava.csv")
+                if not os.path.exists(csv_path):
+                    print(f"[{uid}] Pas de données Strava, skip.")
+                    continue
+                print(f"\n{'#' * 60}")
+                print(f"# Utilisateur : {uid}")
+                print(f"{'#' * 60}\n")
+                try:
+                    run_analysis(force=args.force, data_dir=user_dir, config_path=config_path)
+                except Exception as e:
+                    print(f"ERREUR pour {uid} : {e}")
+            print(f"\nTerminé pour {len(user_ids)} utilisateur(s).")

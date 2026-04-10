@@ -305,18 +305,22 @@ def save_user_profile(user_id: str, profile: dict):
         "hr_z3_max": profile.get("hr_z3_max"),
         "hr_z4_max": profile.get("hr_z4_max"),
         "hr_z5_max": profile.get("hr_z5_max"),
+        "weight_kg": profile.get("weight_kg"),
     }
     with get_db() as db:
         # Use INSERT ... ON CONFLICT for upsert (works on both SQLite and PostgreSQL)
         db.execute(text("""
             INSERT INTO user_profiles (user_id, gender, hr_max, hr_rest, hr_threshold,
-                                       hr_z1_max, hr_z2_max, hr_z3_max, hr_z4_max, hr_z5_max)
+                                       hr_z1_max, hr_z2_max, hr_z3_max, hr_z4_max, hr_z5_max,
+                                       weight_kg)
             VALUES (:user_id, :gender, :hr_max, :hr_rest, :hr_threshold,
-                    :hr_z1_max, :hr_z2_max, :hr_z3_max, :hr_z4_max, :hr_z5_max)
+                    :hr_z1_max, :hr_z2_max, :hr_z3_max, :hr_z4_max, :hr_z5_max,
+                    :weight_kg)
             ON CONFLICT(user_id) DO UPDATE SET
                 gender = :gender, hr_max = :hr_max, hr_rest = :hr_rest, hr_threshold = :hr_threshold,
                 hr_z1_max = :hr_z1_max, hr_z2_max = :hr_z2_max,
-                hr_z3_max = :hr_z3_max, hr_z4_max = :hr_z4_max, hr_z5_max = :hr_z5_max
+                hr_z3_max = :hr_z3_max, hr_z4_max = :hr_z4_max, hr_z5_max = :hr_z5_max,
+                weight_kg = :weight_kg
         """), params)
 
 
@@ -339,6 +343,7 @@ def get_user_profile(user_id: str) -> dict | None:
         "hr_z3_max": row["hr_z3_max"],
         "hr_z4_max": row["hr_z4_max"],
         "hr_z5_max": row["hr_z5_max"],
+        "weight_kg": row["weight_kg"],
     }
 
 

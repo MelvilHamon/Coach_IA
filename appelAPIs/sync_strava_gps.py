@@ -103,7 +103,7 @@ def sync_all(force: bool = False, data_dir: str = None, access_token: str = None
             errors += 1
             print(f"  [{i}/{len(to_fetch)}] {sid} — ERREUR : {e}")
 
-        time.sleep(0.5)
+        # Le rate limiter dans get_strava_gps gère le délai automatiquement
 
     # Mise à jour sync_state.json
     state = {}

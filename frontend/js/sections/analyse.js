@@ -9,7 +9,7 @@ import {
   el, sectionTitle, badge, detailRow, metricCard, fmt, fmtDate, loading, empty,
   acwrColor, riskColor, reviewBox, flagPill, collapsible,
 } from '../components.js';
-import { plotZones, plotSpeed, plotAltitude, plotGap, plotBpm, plotSplits, enableBlockSelect, computeBlockMetrics, updateBlockShapes } from '../charts.js';
+import { plotZones, plotSpeed, plotAltitude, plotGap, plotBpm, plotPower, plotSplits, enableBlockSelect, computeBlockMetrics, updateBlockShapes } from '../charts.js';
 import { renderMap } from '../map.js';
 
 let _actSelect = null;
@@ -60,13 +60,14 @@ async function loadActivity(actId, target) {
 
   try {
     // Fetch all data in parallel
-    const [detail, gpsRes, speedRes, altRes, gapRes, bpmRes, splitsRes, reviewRes, gearRes, assignRes, feedbackRes, sessionAnalysisRes, blocksRes] = await Promise.all([
+    const [detail, gpsRes, speedRes, altRes, gapRes, bpmRes, powerRes, splitsRes, reviewRes, gearRes, assignRes, feedbackRes, sessionAnalysisRes, blocksRes] = await Promise.all([
       api.activity(actId),
       api.gps(actId).catch(() => null),
       api.gpsSpeed(actId).catch(() => null),
       api.gpsAltitude(actId).catch(() => null),
       api.gpsGap(actId).catch(() => null),
       api.gpsBpm(actId).catch(() => null),
+      api.gpsPower(actId).catch(() => null),
       api.gpsSplits(actId).catch(() => null),
       api.review(actId).catch(() => null),
       api.gear().catch(() => null),
@@ -386,9 +387,10 @@ async function loadActivity(actId, target) {
           // Sort blocks by start_km
           manualBlocks.sort((a, b) => a.start_km - b.start_km);
 
-          // Update chart shapes
+          // Update chart shapes (pace blocks only on speed chart)
           const speedChart = document.getElementById('chart-speed');
-          if (speedChart) updateBlockShapes(speedChart, manualBlocks);
+          const paceBlocks = manualBlocks.filter(b => b.type === 'effort');
+          if (speedChart) updateBlockShapes(speedChart, paceBlocks);
 
           renderBlockList();
           renderBlockSummary();
@@ -420,13 +422,14 @@ async function loadActivity(actId, target) {
         addEffortBtn.addEventListener('click', () => enterSelectMode('effort'));
         stopBtn.addEventListener('click', exitSelectMode);
         clearBtn.addEventListener('click', () => {
-          manualBlocks = [];
+          manualBlocks = manualBlocks.filter(b => b.type === 'power_effort');
           onBlocksChanged();
-          api.deleteBlocks(actId).catch(() => {});
+          if (!manualBlocks.length) api.deleteBlocks(actId).catch(() => {});
+          else api.saveBlocks(actId, manualBlocks).catch(() => {});
         });
 
-        // Initial render of saved blocks
-        if (manualBlocks.length) {
+        // Initial render of saved pace blocks
+        if (manualBlocks.filter(b => b.type === 'effort').length) {
           renderBlockList();
           renderBlockSummary();
         }
@@ -446,6 +449,166 @@ async function loadActivity(actId, target) {
         profileSection.appendChild(bpmEl);
       }
 
+      const hasPower = powerRes && powerRes.power_w?.length;
+      let powerBlockListEl, powerBlockSummaryEl;
+      if (hasPower) {
+        profileSection.appendChild(el('h4', { style: { margin: '16px 0 8px', fontSize: '13px', color: 'var(--ink-light)' } }, 'Puissance'));
+
+        // Power block toolbar
+        const addPowerEffortBtn = el('button', { className: 'ca-btn accent', style: { fontSize: '11px', padding: '4px 10px' } }, '+ Bloc effort');
+        const stopPowerBtn = el('button', { className: 'ca-btn', style: { fontSize: '11px', padding: '4px 10px', display: 'none' } }, 'Terminer');
+        const clearPowerBtn = el('button', { className: 'ca-btn', style: { fontSize: '11px', padding: '4px 10px' } }, 'Tout effacer');
+        const powerModeLabel = el('span', { style: { fontSize: '11px', color: 'var(--ink-mid)', fontStyle: 'italic' } });
+
+        const powerToolbar = el('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap' } },
+          addPowerEffortBtn, stopPowerBtn, clearPowerBtn, powerModeLabel,
+        );
+        profileSection.appendChild(powerToolbar);
+
+        const powerEl = el('div', { className: 'ca-chart-card', style: { marginBottom: '8px' } },
+          el('div', { id: 'chart-power' }),
+        );
+        profileSection.appendChild(powerEl);
+
+        // Power block list + summary
+        powerBlockListEl = el('div', { style: { marginBottom: '12px' } });
+        powerBlockSummaryEl = el('div', { style: { marginBottom: '16px' } });
+        profileSection.appendChild(powerBlockListEl);
+        profileSection.appendChild(powerBlockSummaryEl);
+
+        const powerDistKm = powerRes.distance_m.map(d => d / 1000);
+        const powerBpmArr = hasBpm ? bpmRes.bpm : null;
+        const powerSpeedKmh = hasSpeed ? speedRes.speed_kmh : null;
+
+        function renderPowerBlockList() {
+          powerBlockListEl.innerHTML = '';
+          const powerBlocks = manualBlocks.filter(b => b.type === 'power_effort');
+          if (!powerBlocks.length) return;
+
+          for (let i = 0; i < manualBlocks.length; i++) {
+            const b = manualBlocks[i];
+            if (b.type !== 'power_effort') continue;
+            const m = computeBlockMetrics(b, powerDistKm, powerSpeedKmh || powerDistKm.map(() => 0), powerBpmArr, powerRes.power_w);
+            const idx = powerBlocks.indexOf(b) + 1;
+
+            const removeBtn = el('button', {
+              style: { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', fontSize: '13px', padding: '0 4px' },
+              title: 'Supprimer',
+              onClick: () => { manualBlocks.splice(i, 1); onPowerBlocksChanged(); },
+            }, '\u00d7');
+
+            powerBlockListEl.appendChild(el('div', {
+              style: { display: 'flex', alignItems: 'center', gap: '8px', padding: '3px 0', fontSize: '12px', fontFamily: "'JetBrains Mono', monospace" },
+            },
+              el('span', { style: { color: '#EA580C', fontWeight: '600', minWidth: '55px' } }, `Effort ${idx}`),
+              el('span', {}, `${b.start_km.toFixed(2)} → ${b.end_km.toFixed(2)} km`),
+              el('span', { style: { color: 'var(--ink-mid)' } }, `${m.distance_m}m`),
+              el('span', { style: { fontWeight: '600' } }, `${m.avg_power_w != null ? m.avg_power_w + ' W' : '—'}`),
+              m.pace_display !== '—' ? el('span', { style: { color: 'var(--ink-mid)' } }, `${m.pace_display} /km`) : null,
+              el('span', { style: { color: 'var(--ink-mid)' } }, `${m.duration_display}`),
+              m.avg_bpm ? el('span', { style: { color: 'var(--ink-mid)' } }, `${m.avg_bpm} bpm`) : null,
+              removeBtn,
+            ));
+          }
+        }
+
+        function renderPowerBlockSummary() {
+          powerBlockSummaryEl.innerHTML = '';
+          const efforts = manualBlocks.filter(b => b.type === 'power_effort');
+          if (!efforts.length) return;
+
+          const metrics = efforts.map(b => computeBlockMetrics(b, powerDistKm, powerSpeedKmh || powerDistKm.map(() => 0), powerBpmArr, powerRes.power_w));
+          const n = efforts.length;
+          const avgDist = Math.round(metrics.reduce((s, m) => s + m.distance_m, 0) / n);
+          const avgPower = metrics.filter(m => m.avg_power_w).length
+            ? Math.round(metrics.reduce((s, m) => s + (m.avg_power_w || 0), 0) / metrics.filter(m => m.avg_power_w).length)
+            : null;
+          const avgBpm = metrics.filter(m => m.avg_bpm).length
+            ? Math.round(metrics.reduce((s, m) => s + (m.avg_bpm || 0), 0) / metrics.filter(m => m.avg_bpm).length)
+            : null;
+
+          // Recovery between power effort blocks
+          let recovStr = '';
+          if (n > 1) {
+            const sortedEfforts = efforts.slice().sort((a, b) => a.start_km - b.start_km);
+            const recovDists = [];
+            for (let i = 0; i < sortedEfforts.length - 1; i++) {
+              recovDists.push(Math.round((sortedEfforts[i + 1].start_km - sortedEfforts[i].end_km) * 1000));
+            }
+            const avgRecov = Math.round(recovDists.reduce((a, b) => a + b, 0) / recovDists.length);
+            const recovBlocks = [];
+            for (let i = 0; i < sortedEfforts.length - 1; i++) {
+              recovBlocks.push({ start_km: sortedEfforts[i].end_km, end_km: sortedEfforts[i + 1].start_km, type: 'recovery' });
+            }
+            const recovMetrics = recovBlocks.map(b => computeBlockMetrics(b, powerDistKm, powerSpeedKmh || powerDistKm.map(() => 0), powerBpmArr, powerRes.power_w));
+            const avgRecovPower = recovMetrics.filter(m => m.avg_power_w).length
+              ? Math.round(recovMetrics.reduce((s, m) => s + (m.avg_power_w || 0), 0) / recovMetrics.filter(m => m.avg_power_w).length)
+              : null;
+            recovStr = avgRecovPower != null ? `, récup ~${avgRecov}m @ ${avgRecovPower} W` : `, récup ~${avgRecov}m`;
+          }
+
+          const bpmStr = avgBpm ? ` (FC ${avgBpm})` : '';
+          const powerStr = avgPower != null ? `${avgPower} W` : '—';
+          const summary = `${n} \u00d7 ~${avgDist}m @ ${powerStr}${bpmStr}${recovStr}`;
+
+          powerBlockSummaryEl.appendChild(el('div', {
+            style: {
+              padding: '10px 14px', background: 'var(--bg, #F7F4F0)', borderRadius: '8px',
+              border: '1px solid var(--border, #E8E4DF)', fontSize: '13px', fontWeight: '600',
+              fontFamily: "'JetBrains Mono', monospace",
+            },
+          }, summary));
+        }
+
+        function onPowerBlocksChanged() {
+          manualBlocks.sort((a, b) => a.start_km - b.start_km);
+          const powerChart = document.getElementById('chart-power');
+          const powerBlocks = manualBlocks.filter(b => b.type === 'power_effort');
+          if (powerChart) updateBlockShapes(powerChart, powerBlocks);
+          renderPowerBlockList();
+          renderPowerBlockSummary();
+          api.saveBlocks(actId, manualBlocks).catch(() => {});
+        }
+
+        let _disablePowerSelect = null;
+
+        function enterPowerSelectMode() {
+          if (_disablePowerSelect) _disablePowerSelect();
+          powerModeLabel.textContent = 'Cliquer-glisser pour sélectionner un bloc effort';
+          addPowerEffortBtn.style.display = 'none';
+          stopPowerBtn.style.display = '';
+
+          const powerChart = document.getElementById('chart-power');
+          _disablePowerSelect = enableBlockSelect(powerChart, (block) => {
+            block.type = 'power_effort';
+            manualBlocks.push(block);
+            onPowerBlocksChanged();
+          }, 'effort');
+        }
+
+        function exitPowerSelectMode() {
+          if (_disablePowerSelect) { _disablePowerSelect(); _disablePowerSelect = null; }
+          powerModeLabel.textContent = '';
+          addPowerEffortBtn.style.display = '';
+          stopPowerBtn.style.display = 'none';
+        }
+
+        addPowerEffortBtn.addEventListener('click', enterPowerSelectMode);
+        stopPowerBtn.addEventListener('click', exitPowerSelectMode);
+        clearPowerBtn.addEventListener('click', () => {
+          manualBlocks = manualBlocks.filter(b => b.type !== 'power_effort');
+          onPowerBlocksChanged();
+          api.saveBlocks(actId, manualBlocks).catch(() => {});
+        });
+
+        // Initial render of saved power blocks
+        const savedPowerBlocks = manualBlocks.filter(b => b.type === 'power_effort');
+        if (savedPowerBlocks.length) {
+          renderPowerBlockList();
+          renderPowerBlockSummary();
+        }
+      }
+
       if (hasAlt) {
         const altEl = el('div', { className: 'ca-chart-card' },
           el('div', { id: 'chart-altitude' }),
@@ -457,6 +620,7 @@ async function loadActivity(actId, target) {
 
       if (hasSpeed) plotSpeed(document.getElementById('chart-speed'), speedRes, hasAlt ? altRes : null, { blocks: manualBlocks });
       if (hasBpm) plotBpm(document.getElementById('chart-bpm'), bpmRes, hasAlt ? altRes : null);
+      if (hasPower) plotPower(document.getElementById('chart-power'), powerRes, hasAlt ? altRes : null, { blocks: manualBlocks.filter(b => b.type === 'power_effort') });
       if (hasAlt) plotAltitude(document.getElementById('chart-altitude'), altRes);
     }
 

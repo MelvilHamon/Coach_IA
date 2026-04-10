@@ -139,11 +139,14 @@ def get_activity_stream(activity_id: int, user: dict = Depends(get_current_user)
 
     points = []
     for _, row in stream_df.iterrows():
-        points.append(nan_safe({
+        pt = nan_safe({
             "time_s":      row.get("time_s"),
             "speed_kmh":   row.get("speed_kmh"),
             "bpm":         row.get("bpm"),
             "altitude_m":  row.get("altitude_m"),
-        }))
+        })
+        if "power_w" in stream_df.columns:
+            pt["power_w"] = nan_safe(row.get("power_w"))
+        points.append(pt)
 
     return {"activity_id": activity_id, "points": points}
