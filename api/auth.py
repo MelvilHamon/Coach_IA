@@ -139,16 +139,27 @@ def _send_otp_email(email: str, code: str) -> bool:
     msg["From"] = gmail_user
     msg["To"] = email
 
+    # Try port 587 (STARTTLS) first — works on cloud providers that block port 465
+    # Fallback to port 465 (SMTP_SSL) if 587 fails
     try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=10) as server:
+            server.starttls()
             server.login(gmail_user, gmail_pass)
             server.sendmail(gmail_user, email, msg.as_string())
-        logger.info("OTP envoyé par email à %s", email)
+        logger.info("OTP envoyé par email à %s (port 587)", email)
         return True
-    except Exception as e:
-        logger.error("Erreur envoi email à %s: %s", email, e)
-        print(f"\n  CODE DE CONNEXION pour {email}: {code}\n")
-        return False
+    except Exception as e587:
+        logger.warning("SMTP port 587 failed: %s — trying 465", e587)
+        try:
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as server:
+                server.login(gmail_user, gmail_pass)
+                server.sendmail(gmail_user, email, msg.as_string())
+            logger.info("OTP envoyé par email à %s (port 465)", email)
+            return True
+        except Exception as e465:
+            logger.error("Erreur envoi email à %s: 587=%s, 465=%s", email, e587, e465)
+            print(f"\n  CODE DE CONNEXION pour {email}: {code}\n")
+            return False
 
 
 def send_otp(email: str) -> dict:
