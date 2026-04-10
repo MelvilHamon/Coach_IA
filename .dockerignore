@@ -1,0 +1,15 @@
+venv/
+__pycache__/
+*.pyc
+.env
+.env.example
+.git/
+.gitignore
+.claude/
+.garth/
+data/
+config.json
+objectif.txt
+Contexte.md
+*.md
+dashboard/

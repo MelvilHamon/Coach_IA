@@ -618,7 +618,7 @@ async function loadActivity(actId, target) {
 
       target.appendChild(profileSection);
 
-      if (hasSpeed) plotSpeed(document.getElementById('chart-speed'), speedRes, hasAlt ? altRes : null, { blocks: manualBlocks });
+      if (hasSpeed) plotSpeed(document.getElementById('chart-speed'), speedRes, hasAlt ? altRes : null, { blocks: manualBlocks.filter(b => b.type === 'effort') });
       if (hasBpm) plotBpm(document.getElementById('chart-bpm'), bpmRes, hasAlt ? altRes : null);
       if (hasPower) plotPower(document.getElementById('chart-power'), powerRes, hasAlt ? altRes : null, { blocks: manualBlocks.filter(b => b.type === 'power_effort') });
       if (hasAlt) plotAltitude(document.getElementById('chart-altitude'), altRes);
