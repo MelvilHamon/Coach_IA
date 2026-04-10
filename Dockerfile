@@ -2,14 +2,14 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# System deps for psycopg2
+# System deps for psycopg2, cryptography, and native extensions
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq-dev gcc \
+    libpq-dev gcc g++ libffi-dev libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python deps
+# Install Python deps (--prefer-binary avoids compiling from source when wheels exist)
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt psycopg2-binary
+RUN pip install --no-cache-dir --prefer-binary -r requirements.txt psycopg2-binary
 
 # Copy application code
 COPY api/ api/
