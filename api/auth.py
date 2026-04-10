@@ -113,24 +113,28 @@ def _generate_otp() -> str:
 
 def _send_otp_email(email: str, code: str) -> bool:
     """
-    Send OTP email via Resend (HTTPS API) or Gmail SMTP fallback.
-    Priority: RESEND_API_KEY > GMAIL SMTP > console.
+    Send OTP email via Brevo (HTTPS API) or Gmail SMTP fallback.
+    Priority: BREVO_API_KEY > GMAIL SMTP > console.
     Returns True if email was sent, False if printed to console.
     """
-    resend_key = os.environ.get("RESEND_API_KEY")
-    resend_from = os.environ.get("RESEND_FROM", "CoachAgent <onboarding@resend.dev>")
+    brevo_key = os.environ.get("BREVO_API_KEY")
+    brevo_from_email = os.environ.get("BREVO_FROM_EMAIL", "noreply@coachagent.com")
+    brevo_from_name = os.environ.get("BREVO_FROM_NAME", "CoachAgent")
 
-    # ── Resend (HTTPS — works on all cloud providers) ────────────────────
-    if resend_key:
+    # ── Brevo (HTTPS — works on all cloud providers) ─────────────────────
+    if brevo_key:
         try:
             r = requests.post(
-                "https://api.resend.com/emails",
-                headers={"Authorization": f"Bearer {resend_key}"},
+                "https://api.brevo.com/v3/smtp/email",
+                headers={
+                    "api-key": brevo_key,
+                    "Content-Type": "application/json",
+                },
                 json={
-                    "from": resend_from,
-                    "to": [email],
+                    "sender": {"name": brevo_from_name, "email": brevo_from_email},
+                    "to": [{"email": email}],
                     "subject": f"CoachAgent — Code de connexion : {code}",
-                    "text": (
+                    "textContent": (
                         f"Ton code de connexion CoachAgent :\n\n"
                         f"    {code}\n\n"
                         f"Ce code expire dans {OTP_EXPIRY_MINUTES} minutes.\n"
@@ -140,11 +144,11 @@ def _send_otp_email(email: str, code: str) -> bool:
                 timeout=10,
             )
             if r.status_code in (200, 201):
-                logger.info("OTP envoyé via Resend à %s", email)
+                logger.info("OTP envoyé via Brevo à %s", email)
                 return True
-            logger.error("Resend error %s: %s", r.status_code, r.text)
+            logger.error("Brevo error %s: %s", r.status_code, r.text)
         except Exception as e:
-            logger.error("Resend request failed for %s: %s", email, e)
+            logger.error("Brevo request failed for %s: %s", email, e)
 
     # ── Gmail SMTP fallback ──────────────────────────────────────────────
     gmail_user = os.environ.get("GMAIL_EXPEDITEUR")
