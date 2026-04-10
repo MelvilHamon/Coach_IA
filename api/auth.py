@@ -17,6 +17,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
 
+import requests
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
 from sqlalchemy import text
@@ -112,54 +113,79 @@ def _generate_otp() -> str:
 
 def _send_otp_email(email: str, code: str) -> bool:
     """
-    Send OTP via Gmail (SMTP_SSL on port 465) using GMAIL_* env vars.
-    Fallback: print to console if not configured.
+    Send OTP email via Resend (HTTPS API) or Gmail SMTP fallback.
+    Priority: RESEND_API_KEY > GMAIL SMTP > console.
     Returns True if email was sent, False if printed to console.
     """
+    resend_key = os.environ.get("RESEND_API_KEY")
+    resend_from = os.environ.get("RESEND_FROM", "CoachAgent <onboarding@resend.dev>")
+
+    # ── Resend (HTTPS — works on all cloud providers) ────────────────────
+    if resend_key:
+        try:
+            r = requests.post(
+                "https://api.resend.com/emails",
+                headers={"Authorization": f"Bearer {resend_key}"},
+                json={
+                    "from": resend_from,
+                    "to": [email],
+                    "subject": f"CoachAgent — Code de connexion : {code}",
+                    "text": (
+                        f"Ton code de connexion CoachAgent :\n\n"
+                        f"    {code}\n\n"
+                        f"Ce code expire dans {OTP_EXPIRY_MINUTES} minutes.\n"
+                        f"Si tu n'as pas demandé ce code, ignore cet email."
+                    ),
+                },
+                timeout=10,
+            )
+            if r.status_code in (200, 201):
+                logger.info("OTP envoyé via Resend à %s", email)
+                return True
+            logger.error("Resend error %s: %s", r.status_code, r.text)
+        except Exception as e:
+            logger.error("Resend request failed for %s: %s", email, e)
+
+    # ── Gmail SMTP fallback ──────────────────────────────────────────────
     gmail_user = os.environ.get("GMAIL_EXPEDITEUR")
     gmail_pass = os.environ.get("GMAIL_MOT_DE_PASSE")
 
-    if not gmail_user or not gmail_pass:
-        logger.info("No Gmail configured — printing OTP to console")
-        print(f"\n{'='*50}")
-        print(f"  CODE DE CONNEXION pour {email}")
-        print(f"  → {code}")
-        print(f"  (expire dans {OTP_EXPIRY_MINUTES} minutes)")
-        print(f"{'='*50}\n")
-        return False
+    if gmail_user and gmail_pass:
+        msg = MIMEText(
+            f"Ton code de connexion CoachAgent :\n\n"
+            f"    {code}\n\n"
+            f"Ce code expire dans {OTP_EXPIRY_MINUTES} minutes.\n"
+            f"Si tu n'as pas demandé ce code, ignore cet email.",
+            "plain", "utf-8",
+        )
+        msg["Subject"] = f"CoachAgent — Code de connexion : {code}"
+        msg["From"] = gmail_user
+        msg["To"] = email
 
-    msg = MIMEText(
-        f"Ton code de connexion CoachAgent :\n\n"
-        f"    {code}\n\n"
-        f"Ce code expire dans {OTP_EXPIRY_MINUTES} minutes.\n"
-        f"Si tu n'as pas demandé ce code, ignore cet email.",
-        "plain", "utf-8",
-    )
-    msg["Subject"] = f"CoachAgent — Code de connexion : {code}"
-    msg["From"] = gmail_user
-    msg["To"] = email
+        for port, method in [(587, "STARTTLS"), (465, "SSL")]:
+            try:
+                if port == 587:
+                    with smtplib.SMTP("smtp.gmail.com", 587, timeout=10) as server:
+                        server.starttls()
+                        server.login(gmail_user, gmail_pass)
+                        server.sendmail(gmail_user, email, msg.as_string())
+                else:
+                    with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as server:
+                        server.login(gmail_user, gmail_pass)
+                        server.sendmail(gmail_user, email, msg.as_string())
+                logger.info("OTP envoyé via Gmail %s à %s", method, email)
+                return True
+            except Exception as e:
+                logger.warning("Gmail %s failed: %s", method, e)
 
-    # Try port 587 (STARTTLS) first — works on cloud providers that block port 465
-    # Fallback to port 465 (SMTP_SSL) if 587 fails
-    try:
-        with smtplib.SMTP("smtp.gmail.com", 587, timeout=10) as server:
-            server.starttls()
-            server.login(gmail_user, gmail_pass)
-            server.sendmail(gmail_user, email, msg.as_string())
-        logger.info("OTP envoyé par email à %s (port 587)", email)
-        return True
-    except Exception as e587:
-        logger.warning("SMTP port 587 failed: %s — trying 465", e587)
-        try:
-            with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as server:
-                server.login(gmail_user, gmail_pass)
-                server.sendmail(gmail_user, email, msg.as_string())
-            logger.info("OTP envoyé par email à %s (port 465)", email)
-            return True
-        except Exception as e465:
-            logger.error("Erreur envoi email à %s: 587=%s, 465=%s", email, e587, e465)
-            print(f"\n  CODE DE CONNEXION pour {email}: {code}\n")
-            return False
+    # ── Console fallback ─────────────────────────────────────────────────
+    logger.warning("No email provider available — printing OTP to console")
+    print(f"\n{'='*50}")
+    print(f"  CODE DE CONNEXION pour {email}")
+    print(f"  → {code}")
+    print(f"  (expire dans {OTP_EXPIRY_MINUTES} minutes)")
+    print(f"{'='*50}\n")
+    return False
 
 
 def send_otp(email: str) -> dict:
