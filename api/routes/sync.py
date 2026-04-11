@@ -473,6 +473,7 @@ def _run_pipeline(user_id: str):
                     ss["steps_done"].append("garmin:auth_failed")
                     result["steps_run"].append("garmin")
                 except Exception as e:
+                    logger.error("[sync:%s] Garmin error: %s", user_id, e, exc_info=True)
                     ss["steps_done"].append(f"garmin:error:{e}")
                     result["steps_run"].append("garmin")
             else:
@@ -491,6 +492,7 @@ def _run_pipeline(user_id: str):
                 from api.deps import invalidate_cache
                 invalidate_cache(["gps"], user_id=user_id)
             except Exception as e:
+                logger.error("[sync:%s] Matching error: %s", user_id, e, exc_info=True)
                 ss["steps_done"].append(f"matching:error:{e}")
                 result["steps_run"].append("matching")
         else:
@@ -529,6 +531,7 @@ def _run_pipeline(user_id: str):
                         from api.deps import invalidate_cache
                         invalidate_cache(["activities"], user_id=user_id)
                 except Exception as e:
+                    logger.error("[sync:%s] Strava error: %s", user_id, e, exc_info=True)
                     ss["steps_done"].append(f"strava:error:{e}")
                     result["steps_run"].append("strava")
             else:
@@ -555,6 +558,7 @@ def _run_pipeline(user_id: str):
                     _save_file_state(paths, file_state)
                     print(f"[sync:{user_id}] {streams_after - streams_before} new streams → forcing re-analysis")
             except Exception as e:
+                logger.error("[sync:%s] Strava streams error: %s", user_id, e, exc_info=True)
                 ss["steps_done"].append(f"strava_streams:error:{e}")
                 result["steps_run"].append("strava_streams")
 
@@ -589,6 +593,7 @@ def _run_pipeline(user_id: str):
                         from api.deps import invalidate_cache
                         invalidate_cache(["gps"], user_id=user_id)
                 except Exception as e:
+                    logger.error("[sync:%s] Strava GPS error: %s", user_id, e, exc_info=True)
                     ss["steps_done"].append(f"strava_gps:error:{e}")
                     result["steps_run"].append("strava_gps")
             else:
@@ -602,6 +607,7 @@ def _run_pipeline(user_id: str):
             ss["steps_done"].append("gps_analysis")
             result["steps_run"].append("gps_analysis")
         except Exception as e:
+            logger.error("[sync:%s] GPS analysis error: %s", user_id, e, exc_info=True)
             ss["steps_done"].append(f"gps_analysis:error:{e}")
             result["steps_run"].append("gps_analysis")
 
@@ -654,6 +660,7 @@ def _run_pipeline(user_id: str):
                 ss["steps_done"].append("analysis:exit")
                 result["steps_run"].append("analysis")
             except Exception as e:
+                logger.error("[sync:%s] Analysis error: %s", user_id, e, exc_info=True)
                 ss["steps_done"].append(f"analysis:error:{e}")
                 result["steps_run"].append("analysis")
         else:
@@ -669,12 +676,24 @@ def _run_pipeline(user_id: str):
 
         ss["status"] = "idle"
         ss["result"] = result
+        logger.info("[sync:%s] Pipeline finished in %.1fs — steps_run=%s, steps_skipped=%s",
+                     user_id, result["duration_s"],
+                     [s for s in result["steps_run"]],
+                     [s.get("step", s) if isinstance(s, dict) else s for s in result["steps_skipped"]])
+        logger.info("[sync:%s] Result: new_activities=%s, new_streams=%s, gps=%s",
+                     user_id, result["new_activities"], result["new_streams"], result["strava_gps_fetched"])
+        # Log captured stdout from sub-modules
+        captured = buf.getvalue()
+        if captured:
+            for line in captured.strip().splitlines()[:50]:
+                logger.info("[sync:%s] %s", user_id, line)
 
     except Exception as e:
         ss["status"] = "error"
         ss["error"] = str(e)
         result["duration_s"] = round(time.time() - t_start, 1)
         ss["result"] = result
+        logger.error("[sync:%s] Pipeline CRASHED: %s", user_id, e, exc_info=True)
 
     finally:
         ss["finished_at"] = datetime.now(timezone.utc).isoformat()
