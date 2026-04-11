@@ -214,11 +214,142 @@ export function flagPill(key, active) {
 
 export function reviewBox(review) {
   if (!review) return null;
-  const text = review.review_text || '';
-  const meta = [review.model, (review.generated_at || '').slice(0, 10)].filter(Boolean).join('  ·  ');
-
   const box = el('div', { className: 'ca-review-box' });
-  box.innerHTML = simpleMarkdown(text);
+
+  // Structured output (new format with sections)
+  const sections = review.sections;
+  if (sections && (sections.execution || sections.charge)) {
+    // Score badge
+    const score = review.score;
+    if (score != null) {
+      const scoreColor = score >= 7 ? 'var(--success, #2D6A4F)' : score >= 4 ? 'var(--warning, #B8860B)' : 'var(--danger, #D32F2F)';
+      box.appendChild(el('div', { style: { display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' } },
+        el('span', { style: {
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          width: '36px', height: '36px', borderRadius: '50%',
+          background: scoreColor, color: '#fff', fontWeight: '700', fontSize: '15px',
+        } }, String(score)),
+        el('span', { style: { fontSize: '14px', fontWeight: '500' } }, sections.resume || ''),
+      ));
+    } else if (sections.resume) {
+      box.appendChild(el('p', { style: { fontWeight: '500', marginBottom: '10px' } }, sections.resume));
+    }
+
+    // Tags
+    const tags = review.tags;
+    if (tags && tags.length) {
+      const tagContainer = el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' } });
+      for (const t of tags) {
+        const tagColor = ['surcharge', 'fatigue', 'pic_charge', 'monotonie', 'decouplage_eleve'].includes(t)
+          ? 'var(--danger, #D32F2F)' : ['bonne_seance', 'progression', 'seance_cle', 'endurance_solide'].includes(t)
+          ? 'var(--success, #2D6A4F)' : 'var(--ink-mid, #787470)';
+        tagContainer.appendChild(el('span', { style: {
+          fontSize: '11px', padding: '2px 8px', borderRadius: '10px',
+          background: tagColor + '18', color: tagColor, fontWeight: '500',
+        } }, t.replace(/_/g, ' ')));
+      }
+      box.appendChild(tagContainer);
+    }
+
+    // Section blocks
+    const sectionDefs = [
+      { key: 'execution', label: 'Execution' },
+      { key: 'charge', label: 'Charge & coherence' },
+      { key: 'fatigue', label: 'Fatigue & recuperation' },
+      { key: 'conseil', label: 'Conseil' },
+    ];
+    for (const { key, label } of sectionDefs) {
+      const text = sections[key];
+      if (!text) continue;
+      const isConseil = key === 'conseil';
+      box.appendChild(el('div', { style: { marginBottom: '10px' } },
+        el('div', { style: { fontWeight: '600', fontSize: '12px', color: 'var(--ink-mid)', marginBottom: '2px', textTransform: 'uppercase', letterSpacing: '0.5px' } }, label),
+        el('div', { style: {
+          fontSize: '13px', lineHeight: '1.6',
+          ...(isConseil ? { background: 'var(--accent-light, #EBF5FF)', padding: '8px 12px', borderRadius: '6px', borderLeft: '3px solid var(--accent, #2563EB)' } : {}),
+        } }, text),
+      ));
+    }
+  } else {
+    // Legacy fallback: plain text
+    const text = review.review_text || review.review || '';
+    box.innerHTML = simpleMarkdown(text);
+  }
+
+  const meta = [review.model, (review.generated_at || '').slice(0, 10)].filter(Boolean).join('  ·  ');
+  if (meta) {
+    box.appendChild(el('div', { className: 'ca-review-meta' }, meta));
+  }
+  return box;
+}
+
+export function weeklyReviewBox(review) {
+  if (!review) return null;
+  const box = el('div', { className: 'ca-review-box' });
+  const sections = review.sections;
+
+  if (sections) {
+    // Header with score and stats
+    const score = review.score;
+    const headerParts = [];
+    if (review.activities_count != null) headerParts.push(`${review.activities_count} seances`);
+    if (review.total_km != null) headerParts.push(`${review.total_km} km`);
+    if (review.total_elevation != null) headerParts.push(`${review.total_elevation} m D+`);
+
+    const headerRow = el('div', { style: { display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' } });
+    if (score != null) {
+      const scoreColor = score >= 7 ? 'var(--success, #2D6A4F)' : score >= 4 ? 'var(--warning, #B8860B)' : 'var(--danger, #D32F2F)';
+      headerRow.appendChild(el('span', { style: {
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        width: '36px', height: '36px', borderRadius: '50%',
+        background: scoreColor, color: '#fff', fontWeight: '700', fontSize: '15px',
+      } }, String(score)));
+    }
+    headerRow.appendChild(el('span', { style: { fontSize: '13px', color: 'var(--ink-mid)' } }, headerParts.join('  ·  ')));
+    box.appendChild(headerRow);
+
+    if (sections.resume) {
+      box.appendChild(el('p', { style: { fontWeight: '500', marginBottom: '10px', fontSize: '14px' } }, sections.resume));
+    }
+
+    // Tags
+    const tags = review.tags;
+    if (tags && tags.length) {
+      const tagContainer = el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' } });
+      for (const t of tags) {
+        const tagColor = ['surcharge', 'trop_monotone', 'recuperation_necessaire', 'semaine_lourde'].includes(t)
+          ? 'var(--danger, #D32F2F)' : ['bonne_progression', 'equilibree', 'pic_forme'].includes(t)
+          ? 'var(--success, #2D6A4F)' : 'var(--ink-mid, #787470)';
+        tagContainer.appendChild(el('span', { style: {
+          fontSize: '11px', padding: '2px 8px', borderRadius: '10px',
+          background: tagColor + '18', color: tagColor, fontWeight: '500',
+        } }, t.replace(/_/g, ' ')));
+      }
+      box.appendChild(tagContainer);
+    }
+
+    // Section blocks
+    const sectionDefs = [
+      { key: 'volume', label: 'Volume & repartition' },
+      { key: 'intensite', label: 'Intensite & charge' },
+      { key: 'recuperation', label: 'Recuperation' },
+      { key: 'prochaine_semaine', label: 'Semaine suivante' },
+    ];
+    for (const { key, label } of sectionDefs) {
+      const text = sections[key];
+      if (!text) continue;
+      const isAdvice = key === 'prochaine_semaine';
+      box.appendChild(el('div', { style: { marginBottom: '10px' } },
+        el('div', { style: { fontWeight: '600', fontSize: '12px', color: 'var(--ink-mid)', marginBottom: '2px', textTransform: 'uppercase', letterSpacing: '0.5px' } }, label),
+        el('div', { style: {
+          fontSize: '13px', lineHeight: '1.6',
+          ...(isAdvice ? { background: 'var(--accent-light, #EBF5FF)', padding: '8px 12px', borderRadius: '6px', borderLeft: '3px solid var(--accent, #2563EB)' } : {}),
+        } }, text),
+      ));
+    }
+  }
+
+  const meta = [review.model, (review.generated_at || '').slice(0, 10)].filter(Boolean).join('  ·  ');
   if (meta) {
     box.appendChild(el('div', { className: 'ca-review-meta' }, meta));
   }

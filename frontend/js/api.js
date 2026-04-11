@@ -70,6 +70,8 @@ export const api = {
   // Reviews
   review:         (id) => _fetch(`/api/reviews/${id}`),
   generateReview: (id) => _fetch(`/api/reviews/${id}`, { method: 'POST' }),
+  weeklyReview:         (offset = 0) => _fetch(`/api/reviews/weekly/current?offset=${offset}`),
+  generateWeeklyReview: (offset = 0) => _fetch(`/api/reviews/weekly/generate?offset=${offset}`, { method: 'POST' }),
 
   // Config & Status
   config: () => _fetch('/api/config'),

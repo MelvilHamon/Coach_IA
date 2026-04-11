@@ -3,7 +3,7 @@
  */
 
 import { api } from '../api.js';
-import { el, metricCard, sectionTitle, distBar, fmt, loading, empty, acwrStatus, riskStatus } from '../components.js';
+import { el, metricCard, sectionTitle, distBar, fmt, loading, empty, acwrStatus, riskStatus, weeklyReviewBox } from '../components.js';
 import { plotVolume } from '../charts.js';
 import { getCurrentSport } from '../state.js';
 
@@ -68,6 +68,45 @@ export async function renderOverview(container) {
     if (volumeRes.weeks.length) {
       plotVolume(document.getElementById('chart-volume'), volumeRes);
     }
+
+    // ── Bilan hebdomadaire ──
+    const weeklySection = el('div', { className: 'ca-section' },
+      sectionTitle('Bilan de la semaine'),
+    );
+    const weeklyContent = el('div');
+    const weeklyGenBtn = el('button', { className: 'ca-btn accent', style: { marginBottom: '12px' } }, 'Générer le bilan');
+
+    weeklyGenBtn.addEventListener('click', async () => {
+      weeklyGenBtn.textContent = 'Génération…';
+      weeklyGenBtn.disabled = true;
+      try {
+        const res = await api.generateWeeklyReview(0);
+        weeklyContent.innerHTML = '';
+        if (res.review) weeklyContent.appendChild(weeklyReviewBox(res.review));
+        else if (res.error) weeklyContent.appendChild(el('div', { className: 'ca-error' }, res.error));
+      } catch (e) {
+        weeklyContent.appendChild(el('div', { className: 'ca-error' }, e.message));
+      } finally {
+        weeklyGenBtn.textContent = 'Régénérer le bilan';
+        weeklyGenBtn.disabled = false;
+      }
+    });
+
+    weeklySection.appendChild(weeklyGenBtn);
+
+    // Load cached weekly review
+    try {
+      const cachedWeekly = await api.weeklyReview(0);
+      if (cachedWeekly?.review) {
+        weeklyContent.appendChild(weeklyReviewBox(cachedWeekly.review));
+        weeklyGenBtn.textContent = 'Régénérer le bilan';
+      } else {
+        weeklyContent.appendChild(el('div', { className: 'ca-empty' }, 'Aucun bilan — cliquer pour en générer un.'));
+      }
+    } catch (_) { /* ignore */ }
+
+    weeklySection.appendChild(weeklyContent);
+    container.appendChild(weeklySection);
 
     // ── Distribution ──
     const distTypes = distRes.types || [];
