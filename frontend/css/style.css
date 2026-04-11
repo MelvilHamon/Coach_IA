@@ -1648,3 +1648,59 @@ textarea.ca-input {
   .cg-fullpage { padding: 8px 16px 10px; }
   .cg-month-label { font-size: 18px; min-width: 150px; }
 }
+
+/* ── Strava onboarding modal ── */
+
+.ca-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(20, 20, 20, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.3s ease;
+}
+.ca-modal-card {
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  padding: 48px 40px;
+  width: 90%;
+  max-width: 420px;
+  text-align: center;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+  animation: fadeIn 0.3s ease;
+}
+.ca-modal-title {
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 16px;
+}
+.ca-modal-text {
+  font-size: 13px;
+  color: var(--ink-mid);
+  line-height: 1.7;
+  margin-bottom: 28px;
+}
+.ca-modal-strava-btn {
+  height: 48px;
+  cursor: pointer;
+  display: block;
+  margin: 0 auto 16px;
+  transition: opacity var(--transition);
+}
+.ca-modal-strava-btn:hover { opacity: 0.85; }
+.ca-modal-skip {
+  background: none;
+  border: none;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-light);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.ca-modal-skip:hover { color: var(--ink-mid); }

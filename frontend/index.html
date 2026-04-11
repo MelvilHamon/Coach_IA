@@ -80,6 +80,23 @@
 
   </div>
 
+  <!-- ══════ Modal: Strava onboarding (première connexion) ══════ -->
+  <div id="strava-onboarding-modal" class="ca-modal-overlay" style="display:none;">
+    <div class="ca-modal-card">
+      <div class="ca-modal-title">Bienvenue sur PacePilot !</div>
+      <p class="ca-modal-text">
+        Pour commencer, connecte ton compte <strong>Strava</strong> afin de synchroniser automatiquement tes activités.
+      </p>
+      <img
+        id="strava-onboarding-connect"
+        src="/img/btn_strava_connect.png"
+        alt="Connect with Strava"
+        class="ca-modal-strava-btn"
+      >
+      <button id="strava-onboarding-skip" class="ca-modal-skip">Plus tard</button>
+    </div>
+  </div>
+
   <!-- Scripts -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.plot.ly/plotly-2.35.0.min.js" charset="utf-8"></script>

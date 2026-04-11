@@ -93,6 +93,7 @@ function initAuthForms() {
       initHeader();
       initSync();
       navigate('overview');
+      maybeShowStravaOnboarding();
     } catch (err) {
       errEl.textContent = err.message; errEl.style.display = '';
     }
@@ -254,6 +255,30 @@ async function initHeader() {
   }
 }
 
+// ── Strava onboarding modal ────────────────────────────────────────────────
+
+async function maybeShowStravaOnboarding() {
+  try {
+    const [userInfo, status] = await Promise.all([api.me(), api.status()]);
+    if (userInfo.has_strava) return;           // already connected
+    if (status.n_activities > 0) return;       // not a first-timer
+  } catch {
+    return; // non-critical
+  }
+
+  const modal = document.getElementById('strava-onboarding-modal');
+  if (!modal) return;
+  modal.style.display = '';
+
+  document.getElementById('strava-onboarding-connect').addEventListener('click', () => {
+    window.location.href = '/api/auth/strava/login';
+  });
+
+  document.getElementById('strava-onboarding-skip').addEventListener('click', () => {
+    modal.style.display = 'none';
+  });
+}
+
 // ── Init sync check ─────────────────────────────────────────────────────────
 
 async function initSync() {
@@ -325,6 +350,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initHeader();
     initSync();
     navigate(initial);
+    maybeShowStravaOnboarding();
   } else {
     // Still wire nav for after login
     document.querySelectorAll('.ca-nav-tab').forEach(tab => {
