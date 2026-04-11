@@ -455,7 +455,7 @@ def _run_pipeline(user_id: str):
         prev_garmin_total = state_before.get("garmin_activities_total", 0)
 
         # ── Étape 1 : Garmin sync ────────────────────────────────────────
-        if not garmin_creds and not os.path.isdir(paths.garth_dir):
+        if not garmin_creds:
             result["steps_skipped"].append({"step": "garmin", "reason": "pas de credentials Garmin configurées"})
         else:
             need, reason = _needs_garmin_sync(state_before, interval_min)
