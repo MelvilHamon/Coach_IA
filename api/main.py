@@ -91,6 +91,23 @@ def health():
 
 # ── Migration R2 (temporaire — supprimer après migration) ───────────────────
 
+@app.get("/api/debug-r2")
+def debug_r2():
+    """Vérifie quelles variables R2 sont définies (sans montrer les valeurs)."""
+    import os
+    expected = ["R2_BUCKET", "R2_ENDPOINT", "R2_ACCESS_KEY", "R2_SECRET_KEY"]
+    result = {}
+    for var in expected:
+        val = os.environ.get(var, "")
+        if val:
+            result[var] = f"OK ({len(val)} chars)"
+        else:
+            result[var] = "MANQUANT"
+    from api.storage import USE_R2
+    result["USE_R2"] = USE_R2
+    return result
+
+
 @app.get("/api/migrate-r2")
 def migrate_r2(delete_local: bool = False):
     """Endpoint temporaire pour migrer les fichiers vers R2."""
