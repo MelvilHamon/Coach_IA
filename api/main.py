@@ -181,6 +181,41 @@ def _run_migration(delete_local: bool = False):
     _migrate_status["running"] = False
     _migrate_status["done"] = True
 
+
+@app.get("/api/migrate-r2/cleanup")
+def migrate_r2_cleanup():
+    """Supprime les fichiers locaux GPS/streams déjà migrés vers R2."""
+    from api.storage import USE_R2, _USERS_DIR, _R2_MANAGED
+    import os
+
+    if not USE_R2:
+        return {"error": "R2 non configuré"}
+
+    deleted = 0
+    freed_mb = 0
+    users_dir = _USERS_DIR
+    if os.path.isdir(users_dir):
+        for user_id in sorted(os.listdir(users_dir)):
+            user_base = os.path.join(users_dir, user_id)
+            if not os.path.isdir(user_base):
+                continue
+            for managed_subdir in _R2_MANAGED:
+                subdir_path = os.path.join(user_base, managed_subdir)
+                if not os.path.isdir(subdir_path):
+                    continue
+                for fname in os.listdir(subdir_path):
+                    fpath = os.path.join(subdir_path, fname)
+                    if os.path.isfile(fpath):
+                        freed_mb += os.path.getsize(fpath) / 1024 / 1024
+                        os.remove(fpath)
+                        deleted += 1
+
+    return {
+        "status": "done",
+        "files_deleted": deleted,
+        "freed_mb": round(freed_mb, 1),
+    }
+
 # ── Routes API ───────────────────────────────────────────────────────────────
 
 app.include_router(auth_routes.router)
