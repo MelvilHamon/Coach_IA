@@ -108,16 +108,44 @@ def debug_r2():
     return result
 
 
+_migrate_status = {"running": False, "uploaded": 0, "total": 0, "errors": [], "done": False, "total_mb": 0}
+
+
 @app.get("/api/migrate-r2")
 def migrate_r2(delete_local: bool = False):
-    """Endpoint temporaire pour migrer les fichiers vers R2."""
-    from api.storage import USE_R2, _USERS_DIR, _R2_MANAGED, _R2_BUCKET
-    import os, json
+    """Lance la migration en background. Revient immédiatement."""
+    from api.storage import USE_R2
 
     if not USE_R2:
         return {"error": "R2 non configuré (variables R2_* manquantes)"}
 
-    # Collect files
+    if _migrate_status["running"]:
+        return {"status": "already running", **_migrate_status}
+
+    if _migrate_status["done"]:
+        return {"status": "already done", **_migrate_status}
+
+    import threading
+    t = threading.Thread(target=_run_migration, args=(delete_local,), daemon=True)
+    t.start()
+    return {"status": "started", "message": "Migration lancée en background. GET /api/migrate-r2/status pour suivre."}
+
+
+@app.get("/api/migrate-r2/status")
+def migrate_r2_status():
+    """Retourne la progression de la migration."""
+    return _migrate_status
+
+
+def _run_migration(delete_local: bool = False):
+    from api.storage import _USERS_DIR, _R2_MANAGED, _R2_BUCKET, _s3
+    import os
+
+    _migrate_status["running"] = True
+    _migrate_status["uploaded"] = 0
+    _migrate_status["errors"] = []
+    _migrate_status["done"] = False
+
     pairs = []
     users_dir = _USERS_DIR
     if os.path.isdir(users_dir):
@@ -135,35 +163,23 @@ def migrate_r2(delete_local: bool = False):
                         rel = os.path.relpath(fpath, users_dir).replace("\\", "/")
                         pairs.append((fpath, rel))
 
-    if not pairs:
-        return {"status": "nothing to migrate", "files": 0}
+    _migrate_status["total"] = len(pairs)
+    _migrate_status["total_mb"] = round(sum(os.path.getsize(p) for p, _ in pairs) / 1024 / 1024, 1)
 
-    total_mb = sum(os.path.getsize(p) for p, _ in pairs) / 1024 / 1024
-
-    from api.storage import _s3
     s3 = _s3()
-    uploaded = 0
-    errors = []
-
     for fpath, key in pairs:
         try:
             ct = "application/json" if key.endswith(".json") else "text/csv"
             with open(fpath, "rb") as f:
                 s3.put_object(Bucket=_R2_BUCKET, Key=key, Body=f.read(), ContentType=ct)
-            uploaded += 1
+            _migrate_status["uploaded"] += 1
             if delete_local:
                 os.remove(fpath)
         except Exception as e:
-            errors.append(f"{key}: {e}")
+            _migrate_status["errors"].append(f"{key}: {e}")
 
-    return {
-        "status": "done",
-        "bucket": _R2_BUCKET,
-        "files_uploaded": uploaded,
-        "total_mb": round(total_mb, 1),
-        "errors": errors[:10],
-        "local_deleted": delete_local,
-    }
+    _migrate_status["running"] = False
+    _migrate_status["done"] = True
 
 # ── Routes API ───────────────────────────────────────────────────────────────
 
