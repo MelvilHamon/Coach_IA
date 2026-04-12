@@ -88,6 +88,66 @@ app.add_middleware(
 def health():
     return {"status": "ok", "env": APP_ENV}
 
+
+# ── Migration R2 (temporaire — supprimer après migration) ───────────────────
+
+@app.get("/api/migrate-r2")
+def migrate_r2(delete_local: bool = False):
+    """Endpoint temporaire pour migrer les fichiers vers R2."""
+    from api.storage import USE_R2, _USERS_DIR, _R2_MANAGED, _R2_BUCKET
+    import os, json
+
+    if not USE_R2:
+        return {"error": "R2 non configuré (variables R2_* manquantes)"}
+
+    # Collect files
+    pairs = []
+    users_dir = _USERS_DIR
+    if os.path.isdir(users_dir):
+        for user_id in sorted(os.listdir(users_dir)):
+            user_base = os.path.join(users_dir, user_id)
+            if not os.path.isdir(user_base):
+                continue
+            for managed_subdir in _R2_MANAGED:
+                subdir_path = os.path.join(user_base, managed_subdir)
+                if not os.path.isdir(subdir_path):
+                    continue
+                for fname in os.listdir(subdir_path):
+                    fpath = os.path.join(subdir_path, fname)
+                    if os.path.isfile(fpath):
+                        rel = os.path.relpath(fpath, users_dir).replace("\\", "/")
+                        pairs.append((fpath, rel))
+
+    if not pairs:
+        return {"status": "nothing to migrate", "files": 0}
+
+    total_mb = sum(os.path.getsize(p) for p, _ in pairs) / 1024 / 1024
+
+    from api.storage import _s3
+    s3 = _s3()
+    uploaded = 0
+    errors = []
+
+    for fpath, key in pairs:
+        try:
+            ct = "application/json" if key.endswith(".json") else "text/csv"
+            with open(fpath, "rb") as f:
+                s3.put_object(Bucket=_R2_BUCKET, Key=key, Body=f.read(), ContentType=ct)
+            uploaded += 1
+            if delete_local:
+                os.remove(fpath)
+        except Exception as e:
+            errors.append(f"{key}: {e}")
+
+    return {
+        "status": "done",
+        "bucket": _R2_BUCKET,
+        "files_uploaded": uploaded,
+        "total_mb": round(total_mb, 1),
+        "errors": errors[:10],
+        "local_deleted": delete_local,
+    }
+
 # ── Routes API ───────────────────────────────────────────────────────────────
 
 app.include_router(auth_routes.router)
