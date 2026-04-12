@@ -99,10 +99,24 @@ _NAN_ROW["sport"] = "autre"  # sport is a string, not NaN
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+# Cache of known stream filenames (loaded once per run_analysis call)
+_stream_files_cache: set | None = None
+
+
+def _ensure_stream_cache(streams_dir: str = None):
+    global _stream_files_cache
+    if _stream_files_cache is None:
+        _dir = streams_dir or _STREAMS_DIR
+        _stream_files_cache = set(storage.listdir(_dir))
+
+
 def _stream_path(activity_id: int, streams_dir: str = None) -> str | None:
     _dir = streams_dir or _STREAMS_DIR
-    p = os.path.join(_dir, f"{activity_id}.csv")
-    return p if storage.exists(p) else None
+    _ensure_stream_cache(_dir)
+    fname = f"{activity_id}.csv"
+    if fname not in _stream_files_cache:
+        return None
+    return os.path.join(_dir, fname)
 
 
 def _load_stream(activity_id: int, streams_dir: str = None) -> pd.DataFrame | None:
@@ -183,6 +197,10 @@ def run_analysis(force: bool = False, data_dir: str = None, config_path: str = N
     data_dir : répertoire de données utilisateur (défaut: data/)
     config_path : chemin vers config.json (défaut: config.json racine)
     """
+    # Reset stream file cache for this run
+    global _stream_files_cache
+    _stream_files_cache = None
+
     # Resolve paths
     _data_dir = data_dir or os.path.join(_ROOT, "data")
     _csv_path = os.path.join(_data_dir, "mes_activites_strava.csv")

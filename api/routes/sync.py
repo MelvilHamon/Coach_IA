@@ -241,20 +241,18 @@ def _needs_strava_gps(state: dict, paths: UserPaths | None = None) -> tuple[bool
                     with open(paths.garmin_map_json, encoding="utf-8") as f:
                         garmin_map = json.load(f)
 
+                # List all files once (1-2 R2 calls) instead of per-activity checks
+                garmin_stream_files = set(storage.listdir(paths.garmin_streams_dir))
+                gps_files = set(storage.listdir(paths.gps_dir))
+
                 missing = 0
                 for sid in all_ids:
                     has_garmin = False
                     garmin_id = garmin_map.get(str(sid))
                     if garmin_id:
-                        has_garmin = storage.exists(
-                            os.path.join(paths.garmin_streams_dir, f"{garmin_id}.json")
-                        )
-                    has_matched = storage.exists(
-                        os.path.join(paths.gps_dir, f"{sid}.json")
-                    )
-                    has_strava = storage.exists(
-                        os.path.join(paths.gps_dir, f"strava_{sid}.json")
-                    )
+                        has_garmin = f"{garmin_id}.json" in garmin_stream_files
+                    has_matched = f"{sid}.json" in gps_files
+                    has_strava = f"strava_{sid}.json" in gps_files
                     if not has_garmin and not has_matched and not has_strava:
                         missing += 1
 
@@ -328,6 +326,9 @@ def match_strava_garmin(paths: UserPaths) -> dict:
 
     used_strava_ids = set(existing_gps)
 
+    # Pre-load garmin stream filenames (1 R2 call instead of N)
+    garmin_stream_files = set(storage.listdir(garmin_streams))
+
     # Pré-calculer les arrays numpy pour le matching vectorisé
     strava_ids = strava_df["ID"].astype(int).values
     strava_dates_epoch = strava_df["_date"].astype("int64").values // 10**9  # epoch seconds
@@ -339,8 +340,7 @@ def match_strava_garmin(paths: UserPaths) -> dict:
         if gid == 0:
             continue
 
-        stream_path = os.path.join(garmin_streams, f"{gid}.json")
-        if not storage.exists(stream_path):
+        if f"{gid}.json" not in garmin_stream_files:
             continue
 
         raw_start = gact.get("start_time_utc", "")
@@ -398,7 +398,7 @@ def match_strava_garmin(paths: UserPaths) -> dict:
     unmatched = sum(
         1 for g in garmin_acts
         if int(g.get("garmin_id", 0)) != 0
-        and os.path.exists(os.path.join(garmin_streams, f"{int(g['garmin_id'])}.json"))
+        and f"{int(g['garmin_id'])}.json" in garmin_stream_files
         and str(int(g["garmin_id"])) not in {str(v) for v in garmin_map.values()}
     )
 

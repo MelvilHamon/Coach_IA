@@ -281,6 +281,9 @@ def sync_all(max_activities: int = 1000, force_streams: bool = False,
     n_no_gps = 0
     n_already_ok = 0
 
+    # Pre-load existing stream filenames (1 R2 call instead of N)
+    existing_stream_files = set(storage.listdir(_streams_dir))
+
     for raw in raw_activities:
         parsed = _parse_activity(raw)
         gid = parsed["garmin_id"]
@@ -297,7 +300,7 @@ def sync_all(max_activities: int = 1000, force_streams: bool = False,
         entry = index[gid]
 
         # Décider si on tente le stream
-        stream_exists = storage.exists(stream_path)
+        stream_exists = f"{gid}.json" in existing_stream_files
         should_fetch = (
             entry.get("has_gps", True)
             and (not entry.get("stream_fetched", False) or force_streams)

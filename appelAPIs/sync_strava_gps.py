@@ -71,6 +71,10 @@ def sync_all(force: bool = False, data_dir: str = None, access_token: str = None
         with open(_garmin_map, encoding="utf-8") as f:
             garmin_map = json.load(f)
 
+    # Pre-load file lists (1-2 R2 calls instead of 3 per activity)
+    garmin_stream_files = set(storage.listdir(_garmin_streams))
+    gps_files = set(storage.listdir(_gps_dir))
+
     garmin_covered = 0
     strava_existing = 0
     strava_fetched = 0
@@ -79,9 +83,13 @@ def sync_all(force: bool = False, data_dir: str = None, access_token: str = None
 
     to_fetch = []
     for sid in all_ids:
-        if _has_garmin_stream(sid, garmin_map, _garmin_streams) or _has_garmin_gps(sid, _gps_dir):
+        garmin_id = garmin_map.get(str(sid))
+        has_garmin = garmin_id and f"{garmin_id}.json" in garmin_stream_files
+        has_matched = f"{sid}.json" in gps_files
+        has_strava = f"strava_{sid}.json" in gps_files
+        if has_garmin or has_matched:
             garmin_covered += 1
-        elif _has_strava_gps(sid, _gps_dir) and not force:
+        elif has_strava and not force:
             strava_existing += 1
         else:
             to_fetch.append(sid)
