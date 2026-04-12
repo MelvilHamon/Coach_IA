@@ -51,6 +51,8 @@ log = logging.getLogger(__name__)
 # ── Réutilisation depuis get_garmin_gps.py ─────────────────────────────────────
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _ROOT)
+from api import storage
 from get_garmin_gps import _garmin_login, _unwrap_download  # noqa: E402
 
 
@@ -295,7 +297,7 @@ def sync_all(max_activities: int = 1000, force_streams: bool = False,
         entry = index[gid]
 
         # Décider si on tente le stream
-        stream_exists = os.path.exists(stream_path)
+        stream_exists = storage.exists(stream_path)
         should_fetch = (
             entry.get("has_gps", True)
             and (not entry.get("stream_fetched", False) or force_streams)
@@ -317,8 +319,7 @@ def sync_all(max_activities: int = 1000, force_streams: bool = False,
                 "start_time_utc": entry.get("start_time_utc", ""),
                 "points":         points,
             }
-            with open(stream_path, "w", encoding="utf-8") as f:
-                json.dump(stream_data, f, indent=2, ensure_ascii=False)
+            storage.write_json(stream_path, stream_data)
             entry["has_gps"] = True
             entry["stream_fetched"] = True
             n_streams += 1

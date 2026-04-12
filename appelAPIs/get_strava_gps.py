@@ -24,6 +24,8 @@ import requests
 from strava_rate_limiter import strava_get
 
 _ROOT     = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _ROOT)
+from api import storage
 _GPS_DIR  = os.path.join(_ROOT, "data", "gps")
 
 
@@ -51,9 +53,8 @@ def fetch_strava_gps(
 
     _gps_dir = gps_dir or _GPS_DIR
     out_path = os.path.join(_gps_dir, f"strava_{activity_id}.json")
-    if not force and os.path.exists(out_path):
-        with open(out_path, encoding="utf-8") as f:
-            return json.load(f)
+    if not force and storage.exists(out_path):
+        return storage.read_json(out_path)
 
     headers = {"Authorization": f"Bearer {access_token}"}
     r = strava_get(
@@ -95,9 +96,7 @@ def fetch_strava_gps(
         "points": points,
     }
 
-    os.makedirs(_gps_dir, exist_ok=True)
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(result, f, indent=2, ensure_ascii=False)
+    storage.write_json(out_path, result)
 
     return result
 

@@ -24,10 +24,15 @@ Références bibliographiques :
 
 import json
 import os
+import sys
 from datetime import timedelta
 
 import numpy as np
 import pandas as pd
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _ROOT)
+from api import storage
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -895,8 +900,8 @@ def compute_personal_records(
 
     # Fichiers data/gps/ — ne garder que les running
     # Noms possibles : {strava_id}.json (matched Garmin) ou strava_{strava_id}.json (Strava fallback)
-    if os.path.isdir(gps_dir):
-        for fname in os.listdir(gps_dir):
+    if storage.isdir(gps_dir):
+        for fname in storage.listdir(gps_dir):
             if fname.endswith(".json"):
                 stem = fname.replace(".json", "")
                 # Extraire le strava_id réel (supprime le prefix "strava_" s'il existe)
@@ -906,8 +911,8 @@ def compute_personal_records(
                 gps_files.append((os.path.join(gps_dir, fname), act_id, "gps"))
 
     # Fichiers garmin/streams/ — ne garder que ceux mappés à des activités running
-    if os.path.isdir(garmin_streams_dir):
-        for fname in os.listdir(garmin_streams_dir):
+    if storage.isdir(garmin_streams_dir):
+        for fname in storage.listdir(garmin_streams_dir):
             if fname.endswith(".json"):
                 gid = fname.replace(".json", "")
                 strava_id = id_map.get(gid)
@@ -920,10 +925,8 @@ def compute_personal_records(
     records = {dist_name: None for dist_name in pr_distances}
 
     for fpath, file_id, source in gps_files:
-        try:
-            with open(fpath, encoding="utf-8") as f:
-                data = json.load(f)
-        except (json.JSONDecodeError, OSError):
+        data = storage.read_json(fpath)
+        if data is None:
             continue
 
         points = data.get("points", data) if isinstance(data, dict) else data

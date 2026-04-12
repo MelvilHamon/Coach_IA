@@ -6,6 +6,7 @@ Toutes les fonctions acceptent un access_token pré-validé.
 
 import os
 import json
+import sys
 import time
 import requests
 import pandas as pd
@@ -13,7 +14,11 @@ from datetime import datetime, timezone
 
 from strava_rate_limiter import strava_get, get_rate_limit_status
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _ROOT)
+from api import storage
+
+DATA_DIR = os.path.join(_ROOT, "data")
 CSV_PATH = os.path.join(DATA_DIR, "mes_activites_strava.csv")
 STREAMS_DIR = os.path.join(DATA_DIR, "streams")
 SYNC_STATE_PATH = os.path.join(DATA_DIR, "sync_state.json")
@@ -52,9 +57,8 @@ def streams_to_df(streams_json):
 
 def save_streams(df, activity_id, streams_dir: str = None):
     _dir = streams_dir or STREAMS_DIR
-    os.makedirs(_dir, exist_ok=True)
     path = os.path.join(_dir, f"{activity_id}.csv")
-    df.to_csv(path, index=False)
+    storage.write_csv(path, df)
     return path
 
 
@@ -62,10 +66,8 @@ def save_streams(df, activity_id, streams_dir: str = None):
 
 def _already_synced_ids(streams_dir: str = None):
     _dir = streams_dir or STREAMS_DIR
-    if not os.path.exists(_dir):
-        return set()
     synced = set()
-    for fname in os.listdir(_dir):
+    for fname in storage.listdir(_dir):
         stem, ext = os.path.splitext(fname)
         if ext == ".csv" and stem.isdigit():
             synced.add(int(stem))

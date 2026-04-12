@@ -11,12 +11,17 @@ Usage CLI :
 
 import json
 import os
+import sys
 from datetime import timezone
 
 import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 from openai import OpenAI
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _ROOT)
+from api import storage
 
 load_dotenv()
 
@@ -95,10 +100,10 @@ def _load_feedback(activity_id: int, feedback_dir: str) -> dict | None:
 def _load_splits(activity_id: int, streams_dir: str) -> str:
     """Charge les splits du stream si disponible (pour fractionnés)."""
     path = os.path.join(streams_dir, f"{activity_id}.csv")
-    if not os.path.exists(path):
+    df = storage.read_csv(path)
+    if df is None:
         return ""
     try:
-        df = pd.read_csv(path)
         if "distance_m" not in df.columns or "time_s" not in df.columns:
             return ""
 

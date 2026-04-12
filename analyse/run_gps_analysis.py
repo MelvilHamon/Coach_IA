@@ -48,6 +48,8 @@ _GPS_DIR     = os.path.join(_ROOT, "data", "gps")
 _ENRICHED    = os.path.join(_ROOT, "data", "activities_enriched.csv")
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _ROOT)
+from api import storage
 from gps_metrics import summarize_gps, compare_with_strava
 
 
@@ -70,15 +72,16 @@ def _build_garmin_to_strava(gps_dir: str = None) -> dict:
     """
     _dir = gps_dir or _GPS_DIR
     mapping = {}
-    if not os.path.isdir(_dir):
+    if not storage.isdir(_dir):
         return mapping
-    for fname in os.listdir(_dir):
+    for fname in storage.listdir(_dir):
         if not fname.endswith(".json"):
             continue
         fpath = os.path.join(_dir, fname)
+        data = storage.read_json(fpath)
+        if data is None:
+            continue
         try:
-            with open(fpath, encoding="utf-8") as f:
-                data = json.load(f)
             g_id = data.get("garmin_id")
             s_id = data.get("strava_id")
             if g_id is not None and s_id is not None:
@@ -121,13 +124,13 @@ def run_gps_analysis(force: bool = False, data_dir: str = None) -> None:
 
     os.makedirs(_metrics_dir, exist_ok=True)
 
-    if not os.path.isdir(_streams_dir):
+    if not storage.isdir(_streams_dir):
         print(f"Répertoire streams introuvable : {_streams_dir}")
         print("Lancer d'abord : python3 appelAPIs/sync_garmin.py")
         return
 
     stream_files = sorted(
-        f for f in os.listdir(_streams_dir) if f.endswith(".json")
+        f for f in storage.listdir(_streams_dir) if f.endswith(".json")
     )
     if not stream_files:
         print("Aucun stream disponible dans", _streams_dir)
@@ -160,11 +163,9 @@ def run_gps_analysis(force: bool = False, data_dir: str = None) -> None:
 
         # Chargement du stream
         stream_path = os.path.join(_streams_dir, fname)
-        try:
-            with open(stream_path, encoding="utf-8") as f:
-                stream = json.load(f)
-        except Exception as e:
-            print(f"  [{garmin_id}] Erreur lecture : {e}")
+        stream = storage.read_json(stream_path)
+        if stream is None:
+            print(f"  [{garmin_id}] Erreur lecture ou fichier absent")
             n_errors += 1
             continue
 

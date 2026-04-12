@@ -36,6 +36,8 @@ _PR_PATH     = os.path.join(_ROOT, "data", "personal_records.json")
 
 # Ajouter le dossier analyse/ au path pour les imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _ROOT)
+from api import storage
 
 from metrics import (
     compute_trimp,
@@ -100,7 +102,7 @@ _NAN_ROW["sport"] = "autre"  # sport is a string, not NaN
 def _stream_path(activity_id: int, streams_dir: str = None) -> str | None:
     _dir = streams_dir or _STREAMS_DIR
     p = os.path.join(_dir, f"{activity_id}.csv")
-    return p if os.path.exists(p) else None
+    return p if storage.exists(p) else None
 
 
 def _load_stream(activity_id: int, streams_dir: str = None) -> pd.DataFrame | None:
@@ -108,7 +110,7 @@ def _load_stream(activity_id: int, streams_dir: str = None) -> pd.DataFrame | No
     if p is None:
         return None
     try:
-        return pd.read_csv(p)
+        return storage.read_csv(p)
     except Exception:
         return None
 

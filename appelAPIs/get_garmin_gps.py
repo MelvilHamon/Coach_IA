@@ -30,6 +30,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 _ROOT      = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _ROOT)
+from api import storage
 _GPS_DIR   = os.path.join(_ROOT, "data", "gps")
 _GARTH_DIR = os.path.join(_ROOT, ".garth")
 
@@ -166,9 +168,8 @@ def fetch_gps_stream(
     dict {strava_id, garmin_id, points} ou None si non trouvé / pas de GPS.
     """
     out_path = os.path.join(_GPS_DIR, f"{strava_activity_id}.json")
-    if not force and os.path.exists(out_path):
-        with open(out_path, encoding="utf-8") as f:
-            return json.load(f)
+    if not force and storage.exists(out_path):
+        return storage.read_json(out_path)
 
     # Normalise la date en datetime UTC
     if isinstance(date, str):
@@ -248,9 +249,7 @@ def fetch_gps_stream(
         "garmin_id": garmin_id,
         "points":    points,
     }
-    os.makedirs(_GPS_DIR, exist_ok=True)
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(result, f, indent=2, ensure_ascii=False)
+    storage.write_json(out_path, result)
 
     return result
 

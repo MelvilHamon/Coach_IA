@@ -12,12 +12,15 @@ Boucle sur toutes les activités du CSV Strava :
 
 import json
 import os
+import sys
 import time
 from datetime import datetime, timezone
 
 import pandas as pd
 
 _ROOT          = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _ROOT)
+from api import storage
 
 from get_strava_gps import fetch_strava_gps  # noqa: E402
 
@@ -26,15 +29,15 @@ def _has_garmin_stream(strava_id: int, garmin_map: dict, garmin_streams_dir: str
     garmin_id = garmin_map.get(str(strava_id))
     if not garmin_id:
         return False
-    return os.path.exists(os.path.join(garmin_streams_dir, f"{garmin_id}.json"))
+    return storage.exists(os.path.join(garmin_streams_dir, f"{garmin_id}.json"))
 
 
 def _has_garmin_gps(strava_id: int, gps_dir: str) -> bool:
-    return os.path.exists(os.path.join(gps_dir, f"{strava_id}.json"))
+    return storage.exists(os.path.join(gps_dir, f"{strava_id}.json"))
 
 
 def _has_strava_gps(strava_id: int, gps_dir: str) -> bool:
-    return os.path.exists(os.path.join(gps_dir, f"strava_{strava_id}.json"))
+    return storage.exists(os.path.join(gps_dir, f"strava_{strava_id}.json"))
 
 
 def sync_all(force: bool = False, data_dir: str = None, access_token: str = None) -> dict:

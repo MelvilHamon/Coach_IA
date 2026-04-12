@@ -28,6 +28,7 @@ from api.dependencies import get_current_user
 from api.user_data import UserPaths, get_user_paths
 from api.auth import get_garmin_credentials, get_user_profile
 from api.strava_oauth import get_valid_access_token
+from api import storage
 
 logger = logging.getLogger("coachagent.sync")
 
@@ -245,13 +246,13 @@ def _needs_strava_gps(state: dict, paths: UserPaths | None = None) -> tuple[bool
                     has_garmin = False
                     garmin_id = garmin_map.get(str(sid))
                     if garmin_id:
-                        has_garmin = os.path.exists(
+                        has_garmin = storage.exists(
                             os.path.join(paths.garmin_streams_dir, f"{garmin_id}.json")
                         )
-                    has_matched = os.path.exists(
+                    has_matched = storage.exists(
                         os.path.join(paths.gps_dir, f"{sid}.json")
                     )
-                    has_strava = os.path.exists(
+                    has_strava = storage.exists(
                         os.path.join(paths.gps_dir, f"strava_{sid}.json")
                     )
                     if not has_garmin and not has_matched and not has_strava:
@@ -316,11 +317,10 @@ def match_strava_garmin(paths: UserPaths) -> dict:
             garmin_map = json.load(f)
 
     existing_gps = set()
-    if os.path.exists(gps_dir):
-        for fname in os.listdir(gps_dir):
-            stem, ext = os.path.splitext(fname)
-            if ext == ".json" and stem.isdigit():
-                existing_gps.add(int(stem))
+    for fname in storage.listdir(gps_dir):
+        stem, ext = os.path.splitext(fname)
+        if ext == ".json" and stem.isdigit():
+            existing_gps.add(int(stem))
 
     matched = 0
     already_matched = 0
@@ -340,7 +340,7 @@ def match_strava_garmin(paths: UserPaths) -> dict:
             continue
 
         stream_path = os.path.join(garmin_streams, f"{gid}.json")
-        if not os.path.exists(stream_path):
+        if not storage.exists(stream_path):
             continue
 
         raw_start = gact.get("start_time_utc", "")
@@ -375,8 +375,9 @@ def match_strava_garmin(paths: UserPaths) -> dict:
             already_matched += 1
             continue
 
-        with open(stream_path, encoding="utf-8") as f:
-            stream_data = json.load(f)
+        stream_data = storage.read_json(stream_path)
+        if stream_data is None:
+            continue
 
         gps_data = {
             "strava_id": best_strava_id,
@@ -384,8 +385,7 @@ def match_strava_garmin(paths: UserPaths) -> dict:
             "points": stream_data.get("points", []),
         }
         gps_path = os.path.join(gps_dir, f"{best_strava_id}.json")
-        with open(gps_path, "w", encoding="utf-8") as f:
-            json.dump(gps_data, f, indent=2, ensure_ascii=False)
+        storage.write_json(gps_path, gps_data)
 
         garmin_map[str(best_strava_id)] = gid
         used_strava_ids.add(best_strava_id)
@@ -543,11 +543,11 @@ def _run_pipeline(user_id: str):
         else:
             try:
                 # Count streams before to detect new ones
-                streams_before = len([f for f in os.listdir(paths.streams_dir) if f.endswith('.csv')]) if os.path.isdir(paths.streams_dir) else 0
+                streams_before = len([f for f in storage.listdir(paths.streams_dir) if f.endswith('.csv')])
                 from get_streams import sync_all_streams
                 with redirect_stdout(buf):
                     sync_all_streams(data_dir=data_dir, access_token=access_token)
-                streams_after = len([f for f in os.listdir(paths.streams_dir) if f.endswith('.csv')]) if os.path.isdir(paths.streams_dir) else 0
+                streams_after = len([f for f in storage.listdir(paths.streams_dir) if f.endswith('.csv')])
                 ss["steps_done"].append("strava_streams")
                 result["steps_run"].append("strava_streams")
                 result["new_streams"] = streams_after - streams_before

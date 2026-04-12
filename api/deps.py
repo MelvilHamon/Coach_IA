@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 
 from api.user_data import UserPaths
+from api import storage
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -198,9 +199,8 @@ def get_gps_points(activity_id: int, user_id: str | None = None) -> dict | None:
             garmin_id = garmin_map.get(str(activity_id))
             if garmin_id:
                 p1 = os.path.join(p["garmin_str"], f"{garmin_id}.json")
-                if os.path.exists(p1):
-                    with open(p1, encoding="utf-8") as f:
-                        data = json.load(f)
+                data = storage.read_json(p1)
+                if data is not None:
                     data.setdefault("source", "garmin")
                     return data
         except (json.JSONDecodeError, OSError):
@@ -208,17 +208,15 @@ def get_gps_points(activity_id: int, user_id: str | None = None) -> dict | None:
 
     # 2. Fichier GPS matché
     p2 = os.path.join(p["gps"], f"{activity_id}.json")
-    if os.path.exists(p2):
-        with open(p2, encoding="utf-8") as f:
-            data = json.load(f)
+    data = storage.read_json(p2)
+    if data is not None:
         data.setdefault("source", "matched")
         return data
 
     # 3. Fallback Strava
     p3 = os.path.join(p["gps"], f"strava_{activity_id}.json")
-    if os.path.exists(p3):
-        with open(p3, encoding="utf-8") as f:
-            data = json.load(f)
+    data = storage.read_json(p3)
+    if data is not None:
         data.setdefault("source", "strava")
         return data
 
@@ -229,9 +227,7 @@ def get_stream(activity_id: int, user_id: str | None = None) -> pd.DataFrame | N
     """Charge le stream Strava (CSV) pour une activité."""
     p = _paths(user_id)
     path = os.path.join(p["streams"], f"{activity_id}.csv")
-    if not os.path.exists(path):
-        return None
-    return pd.read_csv(path)
+    return storage.read_csv(path)
 
 
 def get_garmin_metrics(garmin_id: int, user_id: str | None = None) -> dict | None:
