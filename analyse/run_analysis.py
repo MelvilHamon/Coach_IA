@@ -218,8 +218,8 @@ def run_analysis(force: bool = False, data_dir: str = None, config_path: str = N
     config = load_config(_cfg_path)
 
     # ── Chargement activités de base ──────────────────────────────────────────
-    if not os.path.exists(_csv_path):
-        print(f"ERREUR : fichier activités introuvable : {_csv_path}")
+    if not os.path.exists(_csv_path) or os.path.getsize(_csv_path) == 0:
+        print(f"ERREUR : fichier activités introuvable ou vide : {_csv_path}")
         sys.exit(1)
 
     df = pd.read_csv(_csv_path)
@@ -231,7 +231,7 @@ def run_analysis(force: bool = False, data_dir: str = None, config_path: str = N
     already_computed_ids = set()
     enriched_cache = {}
 
-    if not force and os.path.exists(_enriched):
+    if not force and os.path.exists(_enriched) and os.path.getsize(_enriched) > 0:
         df_existing = pd.read_csv(_enriched)
         # IDs déjà calculés (session_type non vide)
         mask = df_existing["session_type"].notna()

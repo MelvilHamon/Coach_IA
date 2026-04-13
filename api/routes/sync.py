@@ -232,7 +232,7 @@ def _needs_strava_gps(state: dict, paths: UserPaths | None = None) -> tuple[bool
     if paths is not None:
         try:
             strava_csv = paths.strava_csv
-            if os.path.exists(strava_csv):
+            if os.path.exists(strava_csv) and os.path.getsize(strava_csv) > 0:
                 df = pd.read_csv(strava_csv)
                 all_ids = df["ID"].astype(int).tolist()
 
@@ -295,7 +295,7 @@ def match_strava_garmin(paths: UserPaths) -> dict:
     gps_dir = paths.gps_dir
     garmin_map_path = paths.garmin_map_json
 
-    if not os.path.exists(garmin_index) or not os.path.exists(strava_csv):
+    if not os.path.exists(garmin_index) or not os.path.exists(strava_csv) or os.path.getsize(strava_csv) == 0:
         return {"matched": 0, "already_matched": 0, "unmatched_garmin": 0}
 
     with open(garmin_index, encoding="utf-8") as f:

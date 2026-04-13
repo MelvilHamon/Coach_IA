@@ -94,7 +94,7 @@ def _build_garmin_to_strava(gps_dir: str = None) -> dict:
 def _load_strava_df(enriched_path: str = None) -> pd.DataFrame:
     """Charge activities_enriched.csv. Retourne DataFrame vide si absent."""
     _path = enriched_path or _ENRICHED
-    if not os.path.exists(_path):
+    if not os.path.exists(_path) or os.path.getsize(_path) == 0:
         return pd.DataFrame()
     df = pd.read_csv(_path)
     if "ID" in df.columns:
