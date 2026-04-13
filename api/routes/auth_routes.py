@@ -2,6 +2,7 @@
 api/routes/auth_routes.py — Authentication: OTP login + Strava OAuth linking.
 """
 
+import os
 import secrets
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -185,6 +186,78 @@ def me(user: dict = Depends(get_current_user)):
     }
 
 
+def _reanalyze_after_profile_change(user_id: str):
+    """Sync le profil DB → config.json puis relance l'analyse (force=True)."""
+    import json
+    import logging
+    from contextlib import redirect_stdout
+    import io
+
+    logger = logging.getLogger("coachagent.sync")
+
+    try:
+        from api.user_data import get_user_paths
+        from api.auth import get_user_profile as _get_profile
+
+        paths = get_user_paths(user_id)
+        data_dir = paths.base
+
+        # 1. Sync profil → config.json
+        config = {}
+        if os.path.exists(paths.config_json):
+            with open(paths.config_json, encoding="utf-8") as f:
+                config = json.load(f)
+
+        athlete = config.get("athlete", {})
+        profile = _get_profile(user_id) or {}
+
+        if profile.get("hr_max"):
+            athlete["hr_max"] = profile["hr_max"]
+        if profile.get("hr_rest"):
+            athlete["hr_rest"] = profile["hr_rest"]
+        if profile.get("hr_threshold"):
+            athlete["hr_threshold"] = profile["hr_threshold"]
+        if profile.get("gender"):
+            athlete["sex"] = profile["gender"]
+        if profile.get("weight_kg"):
+            athlete["weight_kg"] = profile["weight_kg"]
+
+        custom_zones = []
+        for i in range(1, 6):
+            val = profile.get(f"hr_z{i}_max")
+            if val:
+                custom_zones.append(val)
+        if len(custom_zones) == 5:
+            athlete["hr_zones_custom"] = custom_zones
+
+        config["athlete"] = athlete
+        os.makedirs(os.path.dirname(paths.config_json), exist_ok=True)
+        with open(paths.config_json, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+
+        # 2. Relancer l'analyse avec force=True
+        import sys
+        _root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        for sub in ("analyse", "appelAPIs"):
+            p = os.path.join(_root, sub)
+            if p not in sys.path:
+                sys.path.insert(0, p)
+        from run_analysis import run_analysis
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            run_analysis(data_dir=data_dir, config_path=paths.config_json, force=True)
+
+        # 3. Invalider le cache
+        from api.deps import invalidate_cache
+        invalidate_cache(["activities", "metrics"], user_id=user_id)
+
+        logger.info("[profile:%s] Re-analysis completed after profile update", user_id)
+
+    except Exception as e:
+        logger.error("[profile:%s] Re-analysis failed: %s", user_id, e, exc_info=True)
+
+
 @router.get("/profile")
 def read_profile(user: dict = Depends(get_current_user)):
     profile = get_user_profile(user["id"])
@@ -194,6 +267,15 @@ def read_profile(user: dict = Depends(get_current_user)):
 @router.post("/profile")
 def set_profile(body: UserProfileBody, user: dict = Depends(get_current_user)):
     save_user_profile(user["id"], body.model_dump())
+
+    # Mettre à jour config.json et relancer l'analyse en background
+    import threading
+    threading.Thread(
+        target=_reanalyze_after_profile_change,
+        args=(user["id"],),
+        daemon=True,
+    ).start()
+
     return {"ok": True}
 
 
