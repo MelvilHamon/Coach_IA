@@ -189,6 +189,11 @@ function _onSyncComplete(syncData) {
   const result = syncData.last_result || {};
   const stepsRun = result.steps_run || [];
 
+  // Avertir l'utilisateur si le token Strava a expiré
+  if (result.strava_auth_error) {
+    _showStravaBanner(result.strava_auth_error);
+  }
+
   if (stepsRun.includes('strava') || stepsRun.includes('analysis')) {
     navigate(_currentSection);
     initHeader();
@@ -198,6 +203,46 @@ function _onSyncComplete(syncData) {
   } else {
     initHeader();
   }
+}
+
+function _showStravaBanner(message) {
+  // Éviter les doublons
+  const existing = document.getElementById('strava-auth-banner');
+  if (existing) existing.remove();
+
+  const banner = document.createElement('div');
+  banner.id = 'strava-auth-banner';
+  banner.style.cssText =
+    'position:fixed;top:0;left:0;right:0;z-index:9999;' +
+    'background:#e74c3c;color:#fff;padding:12px 20px;' +
+    'display:flex;align-items:center;justify-content:space-between;' +
+    'font-size:14px;box-shadow:0 2px 8px rgba(0,0,0,.2)';
+
+  const text = document.createElement('span');
+  text.textContent = message;
+
+  const btnWrap = document.createElement('div');
+  btnWrap.style.cssText = 'display:flex;gap:10px;align-items:center';
+
+  const reconnect = document.createElement('a');
+  reconnect.textContent = 'Reconnecter Strava';
+  reconnect.href = '#settings';
+  reconnect.style.cssText =
+    'background:#fff;color:#e74c3c;padding:6px 14px;border-radius:4px;' +
+    'text-decoration:none;font-weight:600;white-space:nowrap';
+  reconnect.addEventListener('click', () => banner.remove());
+
+  const close = document.createElement('button');
+  close.textContent = '✕';
+  close.style.cssText =
+    'background:none;border:none;color:#fff;font-size:18px;cursor:pointer;padding:0 4px';
+  close.addEventListener('click', () => banner.remove());
+
+  btnWrap.appendChild(reconnect);
+  btnWrap.appendChild(close);
+  banner.appendChild(text);
+  banner.appendChild(btnWrap);
+  document.body.appendChild(banner);
 }
 
 function _startSyncPolling() {

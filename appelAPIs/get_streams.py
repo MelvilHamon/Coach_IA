@@ -26,6 +26,11 @@ SYNC_STATE_PATH = os.path.join(DATA_DIR, "sync_state.json")
 
 # ── Fetch & conversion ────────────────────────────────────────────────────────
 
+class StravaAuthError(Exception):
+    """Token Strava expiré ou révoqué — l'utilisateur doit reconnecter Strava."""
+    pass
+
+
 def get_streams(activity_id, access_token):
     url = f"https://www.strava.com/api/v3/activities/{activity_id}/streams"
     params = {"keys": "time,velocity_smooth,heartrate,altitude,watts", "key_by_type": "true"}
@@ -33,6 +38,11 @@ def get_streams(activity_id, access_token):
     r = strava_get(url, headers=headers, params=params)
     if r.status_code == 404:
         return None
+    if r.status_code == 401:
+        raise StravaAuthError(
+            "Token Strava expiré ou révoqué. "
+            "Veuillez reconnecter Strava dans les paramètres de votre compte."
+        )
     r.raise_for_status()
     return r.json()
 
@@ -134,6 +144,9 @@ def sync_all_streams(data_dir: str = None, access_token: str = None):
                 path = save_streams(df_s, activity_id, _streams_dir)
                 print(f"  [{i}/{len(to_fetch)}] {activity_id} — {len(df_s)} points → {os.path.basename(path)}")
                 ok += 1
+        except StravaAuthError:
+            # Token invalide — inutile de continuer, on remonte l'erreur
+            raise
         except Exception as e:
             print(f"  [{i}/{len(to_fetch)}] {activity_id} — ERREUR : {e}")
             errors += 1

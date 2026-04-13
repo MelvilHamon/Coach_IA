@@ -127,7 +127,11 @@ def invalidate_cache(keys: list[str], user_id: str | None = None) -> None:
 # ── Loaders ──────────────────────────────────────────────────────────────────
 
 def _load_csv(path: str) -> pd.DataFrame:
+    if os.path.getsize(path) == 0:
+        return pd.DataFrame()
     df = pd.read_csv(path)
+    if df.empty or "Date" not in df.columns:
+        return pd.DataFrame()
     df["Date"] = pd.to_datetime(df["Date"], utc=True)
     if "Allure (min/km)" in df.columns:
         df["pace_display"] = df["Allure (min/km)"].apply(

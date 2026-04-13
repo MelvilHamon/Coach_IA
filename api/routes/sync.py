@@ -521,7 +521,7 @@ def _run_pipeline(user_id: str):
             need, reason = _needs_strava_sync(state_before, interval_min, paths)
             if need:
                 try:
-                    from RecupDataStrava import sync_activities
+                    from RecupDataStrava import sync_activities, StravaAuthError
                     with redirect_stdout(buf):
                         n_new = sync_activities(data_dir=data_dir, access_token=access_token)
                     result["new_activities"] = n_new or 0
@@ -530,6 +530,16 @@ def _run_pipeline(user_id: str):
                     if n_new:
                         from api.deps import invalidate_cache
                         invalidate_cache(["activities"], user_id=user_id)
+                except StravaAuthError:
+                    logger.warning("[sync:%s] Strava token expired/revoked — activities skipped", user_id)
+                    ss["steps_done"].append("strava:auth_expired")
+                    result["steps_run"].append("strava")
+                    result["strava_auth_error"] = (
+                        "Votre connexion Strava a expiré. "
+                        "Veuillez reconnecter Strava dans les paramètres de votre compte."
+                    )
+                    # Token invalide → inutile de continuer les étapes Strava
+                    access_token = None
                 except Exception as e:
                     logger.error("[sync:%s] Strava error: %s", user_id, e, exc_info=True)
                     ss["steps_done"].append(f"strava:error:{e}")
@@ -544,7 +554,7 @@ def _run_pipeline(user_id: str):
             try:
                 # Count streams before to detect new ones
                 streams_before = len([f for f in storage.listdir(paths.streams_dir) if f.endswith('.csv')])
-                from get_streams import sync_all_streams
+                from get_streams import sync_all_streams, StravaAuthError
                 with redirect_stdout(buf):
                     sync_all_streams(data_dir=data_dir, access_token=access_token)
                 streams_after = len([f for f in storage.listdir(paths.streams_dir) if f.endswith('.csv')])
@@ -557,6 +567,14 @@ def _run_pipeline(user_id: str):
                     file_state["analysis_activities_count"] = 0
                     _save_file_state(paths, file_state)
                     print(f"[sync:{user_id}] {streams_after - streams_before} new streams → forcing re-analysis")
+            except StravaAuthError:
+                logger.warning("[sync:%s] Strava token expired/revoked — streams skipped", user_id)
+                ss["steps_done"].append("strava_streams:auth_expired")
+                result["steps_run"].append("strava_streams")
+                result["strava_auth_error"] = (
+                    "Votre connexion Strava a expiré. "
+                    "Veuillez reconnecter Strava dans les paramètres de votre compte."
+                )
             except Exception as e:
                 logger.error("[sync:%s] Strava streams error: %s", user_id, e, exc_info=True)
                 ss["steps_done"].append(f"strava_streams:error:{e}")

@@ -14,6 +14,12 @@ from datetime import datetime, timezone
 
 from strava_rate_limiter import strava_get, get_rate_limit_status
 
+
+class StravaAuthError(Exception):
+    """Token Strava expiré ou révoqué — l'utilisateur doit reconnecter Strava."""
+    pass
+
+
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 CSV_PATH = os.path.join(DATA_DIR, "mes_activites_strava.csv")
 SYNC_STATE_PATH = os.path.join(DATA_DIR, "sync_state.json")
@@ -33,6 +39,11 @@ def _fetch_page(token, page, per_page=100, before=None, after=None):
         headers=headers,
         params=params,
     )
+    if response.status_code == 401:
+        raise StravaAuthError(
+            "Token Strava expiré ou révoqué. "
+            "Veuillez reconnecter Strava dans les paramètres de votre compte."
+        )
     response.raise_for_status()
     return response.json()
 
