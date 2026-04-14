@@ -266,7 +266,7 @@ export function reviewBox(review) {
         el('div', { style: { fontWeight: '600', fontSize: '12px', color: 'var(--ink-mid)', marginBottom: '2px', textTransform: 'uppercase', letterSpacing: '0.5px' } }, label),
         el('div', { style: {
           fontSize: '13px', lineHeight: '1.6',
-          ...(isConseil ? { background: 'var(--accent-light, #EBF5FF)', padding: '8px 12px', borderRadius: '6px', borderLeft: '3px solid var(--accent, #2563EB)' } : {}),
+          ...(isConseil ? { background: 'var(--accent-light, #EBF5FF)', color: 'var(--bg-dark, #141414)', padding: '8px 12px', borderRadius: '6px', borderLeft: '3px solid var(--accent, #2563EB)' } : {}),
         } }, text),
       ));
     }
@@ -343,7 +343,7 @@ export function weeklyReviewBox(review) {
         el('div', { style: { fontWeight: '600', fontSize: '12px', color: 'var(--ink-mid)', marginBottom: '2px', textTransform: 'uppercase', letterSpacing: '0.5px' } }, label),
         el('div', { style: {
           fontSize: '13px', lineHeight: '1.6',
-          ...(isAdvice ? { background: 'var(--accent-light, #EBF5FF)', padding: '8px 12px', borderRadius: '6px', borderLeft: '3px solid var(--accent, #2563EB)' } : {}),
+          ...(isAdvice ? { background: 'var(--accent-light, #EBF5FF)', color: 'var(--bg-dark, #141414)', padding: '8px 12px', borderRadius: '6px', borderLeft: '3px solid var(--accent, #2563EB)' } : {}),
         } }, text),
       ));
     }

@@ -167,6 +167,7 @@ pas de texte avant/apres). Le JSON doit suivre exactement cette structure :
 
 Regles pour les champs :
 - score : note globale de la seance (1=mauvais, 5=correct, 8=tres bien, 10=exceptionnel)
+- charge : toujours preciser les grandeurs comparees (ex: "volume en hausse de 30% par rapport a la semaine precedente (45 km vs 35 km)"). Ne jamais ecrire un pourcentage sans dire de quoi il s'agit ni donner les valeurs absolues.
 - tags : 1-3 tags parmi ["bonne_seance", "surcharge", "sous_entrainement", "progression",
   "fatigue", "recuperation_ok", "decouplage_eleve", "monotonie", "pic_charge",
   "seance_cle", "endurance_solide", "intensite_elevee"]
