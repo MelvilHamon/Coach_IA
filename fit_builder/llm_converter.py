@@ -12,7 +12,8 @@ import os
 import re
 
 from dotenv import load_dotenv
-from openai import OpenAI
+
+from analyse.llm_client import get_llm_client
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -92,26 +93,27 @@ Texte : "Seuil 3x2km à 4:30 récup 2min"
 """
 
 
-def text_to_structured(text: str, model: str = "gpt-4o-mini",
-                       temperature: float = 0.4) -> dict:
+def text_to_structured(text: str, model: str | None = None,
+                       temperature: float = 0.4,
+                       llm_cfg: dict | None = None) -> dict:
     """Convertit un texte libre en structure de séance via LLM.
 
     Args:
         text: description textuelle de la séance
-        model: modèle OpenAI à utiliser
+        model: override du modèle (ignoré si llm_cfg fourni)
         temperature: température du LLM
+        llm_cfg: section "llm" du config.json (provider, model, etc.)
 
     Returns:
         dict avec name, description, steps
     """
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise ValueError("OPENAI_API_KEY non configurée")
-
-    client = OpenAI(api_key=api_key)
+    cfg = llm_cfg or {}
+    if model and not llm_cfg:
+        cfg["model"] = model
+    client, resolved_model = get_llm_client(cfg)
 
     response = client.chat.completions.create(
-        model=model,
+        model=resolved_model,
         temperature=temperature,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -177,26 +179,27 @@ def planned_to_description(workout: dict) -> str:
     return "\n".join(parts)
 
 
-def generate_description_from_text(text: str, model: str = "gpt-4o-mini",
-                                    temperature: float = 0.5) -> str:
+def generate_description_from_text(text: str, model: str | None = None,
+                                    temperature: float = 0.5,
+                                    llm_cfg: dict | None = None) -> str:
     """Génère une description détaillée de séance à partir d'un texte court.
 
     Args:
         text: texte court décrivant la séance
-        model: modèle OpenAI
+        model: override du modèle (ignoré si llm_cfg fourni)
         temperature: température
+        llm_cfg: section "llm" du config.json
 
     Returns:
         Description détaillée en français
     """
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise ValueError("OPENAI_API_KEY non configurée")
-
-    client = OpenAI(api_key=api_key)
+    cfg = llm_cfg or {}
+    if model and not llm_cfg:
+        cfg["model"] = model
+    client, resolved_model = get_llm_client(cfg)
 
     response = client.chat.completions.create(
-        model=model,
+        model=resolved_model,
         temperature=temperature,
         messages=[
             {"role": "system", "content": (

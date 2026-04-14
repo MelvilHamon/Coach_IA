@@ -117,10 +117,9 @@ def text_to_fit(body: TextToFitRequest, user: dict = Depends(get_current_user)):
 
     cfg = _load_config()
     llm_cfg = cfg.get("llm", {})
-    model = llm_cfg.get("model", "gpt-4o-mini")
 
     try:
-        structured = text_to_structured(body.text, model=model, temperature=0.4)
+        structured = text_to_structured(body.text, temperature=0.4, llm_cfg=llm_cfg)
     except Exception as e:
         logger.error(f"Erreur LLM text-to-fit: {e}", exc_info=True)
         raise HTTPException(500, f"Erreur conversion LLM: {str(e)}")
@@ -159,7 +158,6 @@ def describe_workout(body: DescribeRequest, user: dict = Depends(get_current_use
 
     cfg = _load_config()
     llm_cfg = cfg.get("llm", {})
-    model = llm_cfg.get("model", "gpt-4o-mini")
 
     # Si workout_id fourni, charger la séance et la décrire
     if body.workout_id:
@@ -173,7 +171,7 @@ def describe_workout(body: DescribeRequest, user: dict = Depends(get_current_use
 
         # Enrichir via LLM
         try:
-            detailed = generate_description_from_text(basic_desc, model=model)
+            detailed = generate_description_from_text(basic_desc, llm_cfg=llm_cfg)
             return {"ok": True, "description": detailed, "basic": basic_desc}
         except Exception as e:
             # Fallback : description basique
@@ -182,7 +180,7 @@ def describe_workout(body: DescribeRequest, user: dict = Depends(get_current_use
     # Texte libre
     if body.text:
         try:
-            detailed = generate_description_from_text(body.text, model=model)
+            detailed = generate_description_from_text(body.text, llm_cfg=llm_cfg)
             return {"ok": True, "description": detailed}
         except Exception as e:
             raise HTTPException(500, f"Erreur description: {str(e)}")

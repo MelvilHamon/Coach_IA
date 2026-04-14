@@ -78,6 +78,9 @@ def generate_weekly_review_endpoint(
             force=True,
             week_offset=offset,
         )
+        # Cas "aucune activité" : remonter l'erreur au frontend
+        if result.get("error"):
+            return {"week": result.get("week"), "review": None, "error": result["error"]}
         return {"week": result.get("week"), "review": nan_safe(result)}
     except Exception as e:
         logger.error("Weekly review generation failed: %s", e)

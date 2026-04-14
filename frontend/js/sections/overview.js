@@ -82,9 +82,11 @@ export async function renderOverview(container) {
       try {
         const res = await api.generateWeeklyReview(0);
         weeklyContent.innerHTML = '';
-        if (res.review) weeklyContent.appendChild(weeklyReviewBox(res.review));
-        else if (res.error) weeklyContent.appendChild(el('div', { className: 'ca-error' }, res.error));
+        if (res.error) weeklyContent.appendChild(el('div', { className: 'ca-empty' }, res.error));
+        else if (res.review) weeklyContent.appendChild(weeklyReviewBox(res.review));
+        else weeklyContent.appendChild(el('div', { className: 'ca-empty' }, 'Aucun bilan disponible.'));
       } catch (e) {
+        weeklyContent.innerHTML = '';
         weeklyContent.appendChild(el('div', { className: 'ca-error' }, e.message));
       } finally {
         weeklyGenBtn.textContent = 'Régénérer le bilan';

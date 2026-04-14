@@ -17,7 +17,8 @@ from datetime import timezone
 import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
-from openai import OpenAI
+
+from analyse.llm_client import get_llm_client
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
@@ -403,9 +404,9 @@ def generate_review(
     llm_cfg = config.get("llm", {})
     prompt = _build_prompt(row, window, memoire, feedback=feedback, splits_str=splits_str)
 
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    client, model = get_llm_client(llm_cfg)
     resp = client.chat.completions.create(
-        model=llm_cfg.get("model", "gpt-4o-mini"),
+        model=model,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
@@ -460,7 +461,7 @@ def generate_review(
             "conseil": review_json.get("conseil", ""),
         },
         "generated_at": pd.Timestamp.now(tz=timezone.utc).isoformat(),
-        "model": llm_cfg.get("model", "gpt-4o-mini"),
+        "model": model,
         "cached": False,
     }
     _save(activity_id, result, paths["reviews_dir"])
@@ -621,9 +622,9 @@ Reponds en francais avec un JSON valide.
     config = _load_config(paths["config"])
     llm_cfg = config.get("llm", {})
 
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    client, model = get_llm_client(llm_cfg)
     resp = client.chat.completions.create(
-        model=llm_cfg.get("model", "gpt-4o-mini"),
+        model=model,
         messages=[
             {"role": "system", "content": WEEKLY_SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
@@ -654,7 +655,7 @@ Reponds en francais avec un JSON valide.
             "prochaine_semaine": review_json.get("prochaine_semaine", ""),
         },
         "generated_at": pd.Timestamp.now(tz=timezone.utc).isoformat(),
-        "model": llm_cfg.get("model", "gpt-4o-mini"),
+        "model": model,
         "cached": False,
     }
 
