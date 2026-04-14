@@ -70,8 +70,11 @@ export async function renderOverview(container) {
     }
 
     // ── Bilan hebdomadaire ──
+    // Dimanche → semaine en cours (complète), sinon → semaine précédente
+    const weeklyOffset = new Date().getDay() === 0 ? 0 : 1;
+
     const weeklySection = el('div', { className: 'ca-section' },
-      sectionTitle('Bilan de la semaine'),
+      sectionTitle(weeklyOffset === 0 ? 'Bilan de la semaine' : 'Bilan de la semaine dernière'),
     );
     const weeklyContent = el('div');
     const weeklyGenBtn = el('button', { className: 'ca-btn accent', style: { marginBottom: '12px' } }, 'Générer le bilan');
@@ -80,7 +83,7 @@ export async function renderOverview(container) {
       weeklyGenBtn.textContent = 'Génération…';
       weeklyGenBtn.disabled = true;
       try {
-        const res = await api.generateWeeklyReview(0);
+        const res = await api.generateWeeklyReview(weeklyOffset);
         weeklyContent.innerHTML = '';
         if (res.error) weeklyContent.appendChild(el('div', { className: 'ca-empty' }, res.error));
         else if (res.review) weeklyContent.appendChild(weeklyReviewBox(res.review));
@@ -98,7 +101,7 @@ export async function renderOverview(container) {
 
     // Load cached weekly review
     try {
-      const cachedWeekly = await api.weeklyReview(0);
+      const cachedWeekly = await api.weeklyReview(weeklyOffset);
       if (cachedWeekly?.review) {
         weeklyContent.appendChild(weeklyReviewBox(cachedWeekly.review));
         weeklyGenBtn.textContent = 'Régénérer le bilan';
