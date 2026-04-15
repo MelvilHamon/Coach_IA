@@ -9,11 +9,19 @@ Le provider est configurable via config.json :
   }
 
 Groq utilise le SDK OpenAI avec un base_url different.
+
+La section "llm" de la config racine fait toujours autorite :
+si la config utilisateur ne contient pas "provider", on le lit
+depuis la config racine du projet.
 """
 
+import json
 import os
 
 from openai import OpenAI
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_ROOT_CONFIG = os.path.join(_ROOT, "config.json")
 
 # Defaults par provider
 _PROVIDERS = {
@@ -30,22 +38,33 @@ _PROVIDERS = {
 }
 
 
+def _root_llm_cfg() -> dict:
+    """Charge la section "llm" de la config racine du projet."""
+    if os.path.exists(_ROOT_CONFIG):
+        with open(_ROOT_CONFIG, encoding="utf-8") as f:
+            return json.load(f).get("llm", {})
+    return {}
+
+
 def get_llm_client(llm_cfg: dict) -> tuple[OpenAI, str]:
     """Retourne (client, model) selon la config LLM.
+
+    La config racine fait autorité pour "provider" et "model" :
+    si la config utilisateur ne les définit pas, on hérite de la racine.
 
     Parameters
     ----------
     llm_cfg : dict
-        Section "llm" du config.json. Clés attendues :
-        - provider (str) : "openai" ou "groq" (defaut: "openai")
-        - model (str) : override du modèle
-        - temperature (float) : utilisé par l'appelant, pas ici
+        Section "llm" du config.json (utilisateur ou racine).
 
     Returns
     -------
     (OpenAI client, model name)
     """
-    provider = llm_cfg.get("provider", "openai").lower()
+    # Fusionner : config racine en base, config utilisateur par-dessus
+    root = _root_llm_cfg()
+    merged = {**root, **{k: v for k, v in llm_cfg.items() if v is not None}}
+    provider = merged.get("provider", "openai").lower()
     if provider not in _PROVIDERS:
         raise ValueError(f"Provider LLM inconnu : {provider}. Choix : {list(_PROVIDERS)}")
 
@@ -62,6 +81,6 @@ def get_llm_client(llm_cfg: dict) -> tuple[OpenAI, str]:
         kwargs["base_url"] = spec["base_url"]
 
     client = OpenAI(**kwargs)
-    model = llm_cfg.get("model", spec["default_model"])
+    model = merged.get("model", spec["default_model"])
 
     return client, model

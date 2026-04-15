@@ -31,7 +31,6 @@ export const api = {
   me:          ()                    => _fetch('/api/auth/me'),
   getProfile:  ()                    => _fetch('/api/auth/profile'),
   saveProfile: (profile)             => _post('/api/auth/profile', profile),
-  saveGarmin:        (email, password) => _post('/api/auth/garmin-credentials', { email, password }),
   stravaDisconnect:  ()               => _post('/api/auth/strava/disconnect', {}),
 
   // Activities

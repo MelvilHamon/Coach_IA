@@ -154,63 +154,6 @@ export async function renderSettings(container) {
   container.appendChild(gearContainer);
   await renderGearSection(gearContainer);
 
-  // ── Garmin credentials ──
-  const garminStatus = userInfo.has_garmin
-    ? el('span', { style: { color: 'var(--success)', fontWeight: 500 } }, 'Configuré')
-    : el('span', { style: { color: 'var(--danger)' } }, 'Non configuré');
-
-  const garminEmail = el('input', { type: 'email', className: 'ca-input', placeholder: 'Email Garmin', style: { width: '260px' } });
-  const garminPw = el('input', { type: 'password', className: 'ca-input', placeholder: 'Mot de passe Garmin', style: { width: '260px' } });
-  const garminMsg = el('div', { className: 'ca-auth-error', style: { display: 'none', marginTop: '8px' } });
-
-  const garminBtn = el('button', {
-    className: 'ca-btn accent',
-    onClick: async () => {
-      garminMsg.style.display = 'none';
-      if (!garminEmail.value || !garminPw.value) {
-        garminMsg.textContent = 'Email et mot de passe requis.';
-        garminMsg.style.display = '';
-        return;
-      }
-      garminBtn.textContent = 'Enregistrement…';
-      garminBtn.disabled = true;
-      try {
-        const res = await api.saveGarmin(garminEmail.value, garminPw.value);
-        if (res.ok) {
-          garminMsg.textContent = 'Identifiants Garmin enregistrés.';
-          garminMsg.style.color = 'var(--success)';
-          garminMsg.style.display = '';
-          garminEmail.value = '';
-          garminPw.value = '';
-        } else {
-          garminMsg.textContent = res.error || 'Erreur';
-          garminMsg.style.color = 'var(--danger)';
-          garminMsg.style.display = '';
-        }
-      } catch (e) {
-        garminMsg.textContent = e.message;
-        garminMsg.style.color = 'var(--danger)';
-        garminMsg.style.display = '';
-      } finally {
-        garminBtn.textContent = 'Enregistrer';
-        garminBtn.disabled = false;
-      }
-    },
-  }, 'Enregistrer');
-
-  const garminSection = el('div', { className: 'ca-section' },
-    sectionTitle('Garmin Connect'),
-    el('div', { style: { marginBottom: '12px' } }, el('span', {}, 'Statut : '), garminStatus),
-    el('div', { className: 'ca-settings-explain' },
-      'Tes identifiants Garmin sont chiffrés et stockés localement. Ils servent à synchroniser tes activités et données GPS.',
-    ),
-    el('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', marginTop: '12px' } },
-      garminEmail, garminPw, garminBtn,
-    ),
-    garminMsg,
-  );
-  container.appendChild(garminSection);
-
   // ── Strava OAuth ──
   const stravaConnected = userInfo.has_strava;
   const stravaMsg = el('div', { className: 'ca-auth-error', style: { display: 'none', marginTop: '8px' } });
