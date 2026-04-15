@@ -68,6 +68,7 @@ def detect_session_type(
     athlete_cfg  = cfg.get("athlete", {})
     sess_cfg     = cfg.get("session_classifier", {})
     speed_profile = cfg.get("athlete_speed_profile", {})
+    det_cfg      = cfg.get("detection_fractionne", {})
 
     hr_max         = athlete_cfg.get("hr_max", 195)
     long_run_km    = athlete_cfg.get("long_run_threshold_km", 15.0)
@@ -111,13 +112,27 @@ def detect_session_type(
 
     # ── 4. Fractionné (détection via stream) ─────────────────────────────────
     min_effort_spd = float(speed_profile.get("p75_kmh", 0.0))
+    athlete_mean_spd = float(speed_profile.get("mean_kmh", 0.0))
+
+    # Résoudre max_block_cv depuis la config utilisateur (pas la config racine)
+    if sport_type == "TrailRun":
+        _max_blk_cv = det_cfg.get("max_block_cv_trail", None)
+    else:
+        _max_blk_cv = det_cfg.get("max_block_cv_run", None)
+    _max_recup_cv = det_cfg.get("max_recup_cv", None)
+
     if stream_path and os.path.exists(stream_path):
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", RuntimeWarning)
-                result = analyze_fractionne(stream_path, verbose=False,
-                                            sport_type=sport_type,
-                                            min_effort_speed_kmh=min_effort_spd)
+                result = analyze_fractionne(
+                    stream_path, verbose=False,
+                    sport_type=sport_type,
+                    min_effort_speed_kmh=min_effort_spd,
+                    athlete_mean_speed_kmh=athlete_mean_spd,
+                    max_block_cv=_max_blk_cv,
+                    max_recup_cv=_max_recup_cv,
+                )
             if result.get("is_fractionne"):
                 return result.get("session_type", "fractionné")
         except Exception:

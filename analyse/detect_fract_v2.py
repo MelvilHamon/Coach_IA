@@ -463,11 +463,12 @@ def _validate_fractionne(
     max_recup_cv: float        = 0.45,
     min_ef_vs_mean: float      = 1.03,
     min_effort_speed_kmh: float = 0.0,
+    athlete_mean_speed_kmh: float = 0.0,
 ) -> bool:
     """
     Valide qu'une séance est un fractionné STRUCTURÉ, pas une simple variation de terrain.
 
-    Cinq critères cumulatifs :
+    Critères cumulatifs :
 
     1. CV global de vitesse lissée >= min_cv (défaut : 0.17)
        Mesure l'amplitude des oscillations vitesse sur toute la séance.
@@ -499,8 +500,25 @@ def _validate_fractionne(
        les critères structurels mais dont l'allure est en réalité de l'endurance.
        Inactif (0.0) si athlete_speed_profile absent de config.json.
 
+    Adaptation automatique pour coureurs lents :
+       Quand athlete_mean_speed_kmh > 0, les seuils max_block_cv et min_ef_ratio
+       sont ajustés proportionnellement. Le bruit GPS (~0.5 km/h) a un impact relatif
+       plus fort à basse vitesse, et l'écart effort/récup est naturellement plus faible.
+       Référence : seuils calibrés à ~12 km/h.
+
     Note : le DBSCAN (reps >= 3) reste nécessaire mais pas suffisant seul.
     """
+    # ── Adaptation des seuils selon le niveau de l'athlète ───────────────────
+    # Le bruit GPS est ~constant en absolu, donc son impact sur le CV intra-bloc
+    # augmente quand la vitesse baisse. L'écart effort/récup est aussi plus faible
+    # en absolu pour un coureur lent → ratio naturellement plus bas.
+    # Référence : seuils calibrés à ~12 km/h (coureur « rapide »).
+    if athlete_mean_speed_kmh > 0:
+        speed_factor = max(0.6, min(1.0, athlete_mean_speed_kmh / 12.0))
+        max_block_cv = min(0.20, max_block_cv / speed_factor)
+        min_ef_ratio = max(1.20, min_ef_ratio - 0.12 * (1 - speed_factor))
+        min_cv = max(0.12, min_cv - 0.05 * (1 - speed_factor))
+
     # Prérequis : au moins un cluster avec 3+ répétitions
     if not any(p["reps"] >= 3 for p in patterns):
         return False
@@ -714,6 +732,7 @@ def analyze_fractionne(
     max_recup_cv: float       | None = None,   # None = chargé depuis config
     min_ef_vs_mean: float     = 1.03,
     min_effort_speed_kmh: float = 0.0,         # 0.0 = inactif ; fourni par session_classifier
+    athlete_mean_speed_kmh: float = 0.0,       # vitesse moyenne athlète pour adaptation seuils
     sport_type: str           = "Run",
     verbose: bool             = True,
 ) -> dict:
@@ -807,6 +826,7 @@ def analyze_fractionne(
         max_recup_cv=max_recup_cv,
         min_ef_vs_mean=min_ef_vs_mean,
         min_effort_speed_kmh=min_effort_speed_kmh,
+        athlete_mean_speed_kmh=athlete_mean_speed_kmh,
     )
 
     pyramid = None
