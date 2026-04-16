@@ -566,18 +566,25 @@ def _validate_fractionne(
     # Raison : les blocs parasites d'échauffement (frôlant le seuil GMM)
     # génèrent une récupération anormalement longue avant le premier vrai
     # intervalle, qui ferait exploser le CV si on les incluait.
-    if not recoveries.empty and not blocks.empty and "cluster" in blocks.columns:
-        valid_blks = blocks[blocks["cluster"] != -1]
-        if not valid_blks.empty:
-            best_cluster   = valid_blks.groupby("cluster").size().idxmax()
-            cluster_recups = recoveries[recoveries["cluster"] == best_cluster]
-            if len(cluster_recups) >= 2:
-                recup_cv = float(
-                    cluster_recups["recup_dur_s"].std()
-                    / (cluster_recups["recup_dur_s"].mean() + 1e-6)
-                )
-                if recup_cv >= max_recup_cv:
-                    return False
+    #
+    # Ce critère est bypassé quand les signaux structurels sont forts :
+    # CV global >= 2× seuil ET ratio effort/récup >= 1.5. Dans ce cas,
+    # la séance est clairement structurée même si les récups sont irrégulières
+    # (feux, côtes, pauses eau…).
+    strong_structural_signal = (cv >= min_cv * 2) and (effort_spd / (recovery_spd + 1e-6) >= 1.5)
+    if not strong_structural_signal:
+        if not recoveries.empty and not blocks.empty and "cluster" in blocks.columns:
+            valid_blks = blocks[blocks["cluster"] != -1]
+            if not valid_blks.empty:
+                best_cluster   = valid_blks.groupby("cluster").size().idxmax()
+                cluster_recups = recoveries[recoveries["cluster"] == best_cluster]
+                if len(cluster_recups) >= 2:
+                    recup_cv = float(
+                        cluster_recups["recup_dur_s"].std()
+                        / (cluster_recups["recup_dur_s"].mean() + 1e-6)
+                    )
+                    if recup_cv >= max_recup_cv:
+                        return False
 
     # ── Critère 5 : vitesse effort > moyenne session × seuil ─────────────────
     session_mean_spd = float(df["speed_smooth"].mean())
