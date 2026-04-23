@@ -175,14 +175,37 @@ def strava_disconnect(user: dict = Depends(get_current_user)):
 
 @router.get("/me")
 def me(user: dict = Depends(get_current_user)):
+    import json as _json
     profile = get_user_profile(user["id"])
     strava_tokens = get_strava_tokens(user["id"])
+
+    # Profil FC/vitesse auto-détecté depuis les streams (informatif pour l'UI).
+    # Permet d'afficher côté Settings la valeur estimée à côté de la valeur
+    # utilisateur pour que l'athlète puisse comparer.
+    hr_auto = None
+    speed_auto = None
+    hr_source = None
+    try:
+        from api.user_data import get_user_paths
+        _paths = get_user_paths(user["id"])
+        if os.path.exists(_paths.config_json):
+            with open(_paths.config_json, encoding="utf-8") as f:
+                _cfg = _json.load(f)
+            hr_auto = _cfg.get("athlete_hr_profile")
+            speed_auto = _cfg.get("athlete_speed_profile")
+            hr_source = (_cfg.get("athlete") or {}).get("hr_max_source")
+    except Exception:
+        pass
+
     return {
         "user": user,
         "has_garmin": has_garmin_credentials(user["id"]),
         "has_strava": has_strava_connected(user["id"]),
         "strava_athlete_id": strava_tokens["athlete_id"] if strava_tokens else None,
         "profile": profile,
+        "hr_profile_auto": hr_auto,
+        "speed_profile_auto": speed_auto,
+        "hr_max_source": hr_source,
     }
 
 
@@ -211,10 +234,26 @@ def _reanalyze_after_profile_change(user_id: str):
         athlete = config.get("athlete", {})
         profile = _get_profile(user_id) or {}
 
+        # Cascade de priorité hr_max/hr_rest :
+        # 1. Utilisateur a renseigné la valeur dans l'UI → source="user" (authoritative)
+        # 2. Sinon on laisse run_analysis la remplacer par l'estimée des streams.
+        # On ne REMET PAS la source à "estimated" ici si la valeur vient d'être
+        # enlevée par l'utilisateur (champ vidé) : run_analysis recalcul fera ça.
         if profile.get("hr_max"):
             athlete["hr_max"] = profile["hr_max"]
+            athlete["hr_max_source"] = "user"
+        else:
+            # L'utilisateur n'a pas (ou plus) de valeur → on déclenche la
+            # retombée sur l'estimée au prochain run_analysis en retirant la
+            # marque "user".
+            if athlete.get("hr_max_source") == "user":
+                athlete["hr_max_source"] = "default"
         if profile.get("hr_rest"):
             athlete["hr_rest"] = profile["hr_rest"]
+            athlete["hr_rest_source"] = "user"
+        else:
+            if athlete.get("hr_rest_source") == "user":
+                athlete["hr_rest_source"] = "default"
         if profile.get("hr_threshold"):
             athlete["hr_threshold"] = profile["hr_threshold"]
         if profile.get("gender"):

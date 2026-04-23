@@ -48,6 +48,7 @@ from metrics import (
     compute_acwr,
     compute_weekly_metrics,
     compute_athlete_speed_profile,
+    compute_athlete_hr_profile,
     compute_injury_risk,
     compute_progression_metrics,
     compute_fitness_fatigue,
@@ -227,6 +228,78 @@ def run_analysis(force: bool = False, data_dir: str = None, config_path: str = N
     df = df.sort_values("Date").reset_index(drop=True)
     print(f"Activités chargées : {len(df)}")
 
+    # ── Mise à jour PRÉALABLE du profil vitesse athlète ───────────────────────
+    # Calculé AVANT la classification pour que la détection fractionné/seuil
+    # utilise des seuils adaptés dès le premier passage (fix du feedback loop).
+    prev_profile = config.get("athlete_speed_profile", {}) or {}
+    prev_p75 = float(prev_profile.get("p75_kmh", 0.0))
+
+    speed_profile = compute_athlete_speed_profile(df)
+    config["athlete_speed_profile"] = speed_profile
+
+    new_p75 = float(speed_profile.get("p75_kmh", 0.0))
+    # Invalider le cache session_type si le profil vitesse a significativement
+    # changé (> 5% sur p75), car la classification dépend du profil.
+    profile_changed = (
+        prev_p75 > 0 and new_p75 > 0
+        and abs(new_p75 - prev_p75) / prev_p75 > 0.05
+    )
+    # Si le profil n'existait pas avant (première analyse) et qu'il vient d'être
+    # calculé, on force aussi le recalcul.
+    profile_bootstrapped = prev_p75 == 0.0 and new_p75 > 0.0
+
+    if profile_changed or profile_bootstrapped:
+        if profile_changed:
+            print(f"Profil vitesse : changement significatif détecté "
+                  f"(p75 {prev_p75:.2f} → {new_p75:.2f} km/h) — "
+                  f"invalidation du cache de classification.")
+        force = True
+
+    # ── Profil FC athlète (auto-détection depuis streams) ────────────────────
+    # Cascade de priorité pour hr_max :
+    #   "user"      → utilisateur l'a renseigné via l'UI (Settings)
+    #   "estimated" → auto-détecté depuis les streams (99ᵉ pctile de FC max)
+    #   "default"   → valeur par défaut (195) faute de données
+    #
+    # Si hr_max_source == "user", on NE TOUCHE PAS à athlete.hr_max : la valeur
+    # utilisateur reste authoritative. On continue néanmoins de calculer
+    # l'estimé pour l'afficher en info dans les paramètres.
+    athlete = config.setdefault("athlete", {})
+    hr_max_source = athlete.get("hr_max_source", "default")
+    prev_hr_max = int(athlete.get("hr_max", 195))
+
+    hr_profile = compute_athlete_hr_profile(df, _streams_dir)
+    config["athlete_hr_profile"] = hr_profile
+
+    hr_max_observed = hr_profile.get("hr_max_observed")
+
+    if hr_max_source != "user" and hr_max_observed:
+        athlete["hr_max"] = hr_max_observed
+        athlete["hr_max_source"] = "estimated"
+
+        # Invalider le cache si la FC max a changé de plus de 3 bpm
+        # (affecte les zones, TRIMP, détection tempo/récup).
+        if abs(athlete["hr_max"] - prev_hr_max) > 3:
+            print(f"FC max : changement significatif détecté "
+                  f"({prev_hr_max} → {athlete['hr_max']} bpm, source=estimated) — "
+                  f"invalidation du cache de classification.")
+            force = True
+
+    # Persister immédiatement pour que detect_session_type voie les nouvelles valeurs.
+    with open(_cfg_path, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+
+    if speed_profile.get("computed_from_n_activities", 0) > 0:
+        print(f"Profil vitesse : p70={speed_profile['p70_kmh']} / "
+              f"p75={speed_profile['p75_kmh']} / p80={speed_profile['p80_kmh']} km/h "
+              f"(calculé sur {speed_profile['computed_from_n_activities']} runs)")
+
+    if hr_max_observed:
+        src_tag = athlete.get("hr_max_source", "default")
+        print(f"Profil FC : hr_max={athlete.get('hr_max')} bpm "
+              f"(source={src_tag}, observé={hr_max_observed} sur "
+              f"{hr_profile['computed_from_n_activities']} séances)")
+
     # ── Chargement données enrichies existantes ───────────────────────────────
     already_computed_ids = set()
     enriched_cache = {}
@@ -352,14 +425,6 @@ def run_analysis(force: bool = False, data_dir: str = None, config_path: str = N
     pr_velo_dists = ", ".join(f"{k}: {v['pace']}/km" for k, v in pr_velo.items())
     print(f"  Records run   : {pr_run_dists or 'aucun'}")
     print(f"  Records vélo  : {pr_velo_dists or 'aucun'}")
-
-    # ── Profil de vitesse athlète → config.json ───────────────────────────────
-    speed_profile = compute_athlete_speed_profile(df_enriched)
-    config["athlete_speed_profile"] = speed_profile
-    with open(_cfg_path, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=2, ensure_ascii=False)
-    print(f"Profil vitesse : p75={speed_profile['p75_kmh']} km/h "
-          f"(calculé sur {speed_profile['computed_from_n_activities']} runs)")
 
     # ── Mise à jour sync_state.json ───────────────────────────────────────────
     state = {}

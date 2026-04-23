@@ -19,6 +19,8 @@ export async function renderSettings(container) {
   }
 
   const profile = userInfo.profile || {};
+  const hrAuto = userInfo.hr_profile_auto || {};
+  const hrSource = userInfo.hr_max_source || 'default';
 
   container.innerHTML = '';
   container.appendChild(sectionTitle('Paramètres'));
@@ -57,6 +59,41 @@ export async function renderSettings(container) {
   const hrMax = hrInput('FC max', 'hr_max');
   const hrRest = hrInput('FC repos', 'hr_rest');
   const hrThreshold = hrInput('FC seuil', 'hr_threshold');
+
+  // Affichage de la FC auto-détectée depuis les streams (informatif).
+  const autoBadge = (value, n) => {
+    if (!value) return null;
+    const label = `Auto : ${value} bpm`;
+    const sub = n ? ` (${n} séances)` : '';
+    return el('span', {
+      style: {
+        fontSize: '11px', color: 'var(--ink-light)',
+        marginLeft: '4px', whiteSpace: 'nowrap',
+      },
+      title: 'Valeur estimée à partir des streams de tes activités. '
+           + 'La valeur que tu renseignes ci-contre est prioritaire.',
+    }, label + sub);
+  };
+  const hrMaxAutoBadge = autoBadge(hrAuto.hr_max_observed, hrAuto.computed_from_n_activities);
+
+  // Indicateur de la source active (user / estimated / default).
+  const sourceLabel = {
+    user:      'Saisie manuelle',
+    estimated: 'Auto-détectée',
+    default:   'Valeur par défaut',
+  }[hrSource] || hrSource;
+  const sourceBadge = el('span', {
+    style: {
+      fontSize: '10px', marginLeft: '8px',
+      padding: '2px 6px', borderRadius: '4px',
+      background: hrSource === 'user' ? 'var(--success-bg, #e6f7ed)' :
+                  hrSource === 'estimated' ? 'var(--info-bg, #e6f0fb)' :
+                  'var(--border)',
+      color: hrSource === 'user' ? 'var(--success)' :
+             hrSource === 'estimated' ? 'var(--info, #2f6eb5)' :
+             'var(--ink-mid)',
+    },
+  }, `FC max active : ${sourceLabel}`);
 
   const weightInput = el('input', {
     type: 'number', className: 'ca-input', placeholder: 'Poids (kg)',
@@ -123,14 +160,17 @@ export async function renderSettings(container) {
   const profileSection = el('div', { className: 'ca-section' },
     sectionTitle('Profil physiologique'),
     el('div', { className: 'ca-settings-explain' },
-      'Ces informations permettent de calculer tes zones FC, TRIMP et hrTSS avec précision.',
+      'Ces informations permettent de calculer tes zones FC, TRIMP et hrTSS avec précision. ',
+      'La valeur que tu saisis est prioritaire sur l’estimation automatique depuis tes streams.',
     ),
     el('div', { style: { display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center', marginTop: '12px' } },
       el('label', { style: { fontSize: '12px' } }, 'Genre : '), genderSelect,
       el('label', { style: { fontSize: '12px' } }, 'FC max : '), hrMax,
-      el('label', { style: { fontSize: '12px' } }, 'FC repos : '), hrRest,
-      el('label', { style: { fontSize: '12px' } }, 'FC seuil : '), hrThreshold,
-      el('label', { style: { fontSize: '12px' } }, 'Poids : '), weightInput,
+      hrMaxAutoBadge,
+      el('label', { style: { fontSize: '12px', marginLeft: '8px' } }, 'FC repos : '), hrRest,
+      el('label', { style: { fontSize: '12px', marginLeft: '8px' } }, 'FC seuil : '), hrThreshold,
+      el('label', { style: { fontSize: '12px', marginLeft: '8px' } }, 'Poids : '), weightInput,
+      sourceBadge,
     ),
     el('div', { style: { marginTop: '12px' } },
       el('div', { className: 'ca-settings-explain', style: { marginBottom: '8px' } },

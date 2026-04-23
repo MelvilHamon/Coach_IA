@@ -5,10 +5,11 @@ Hiérarchie de classification :
   1. Sport non-running (Soccer, Hike, Workout…) → type brut Strava
   2. Trail : sport_type == 'TrailRun' OU D+/km > seuil config
   3. Fractionné : stream disponible + detect_fract_v2 détecte des patterns
-  4. Récupération active : durée courte + FC basse
-  5. Sortie longue : distance > seuil
-  6. Tempo/seuil : FC moyenne > 80 % FC_max
-  7. Endurance fondamentale : défaut pour les runs
+  4. Tempo/seuil (allure) : vitesse moyenne ≥ p80 athlète ET durée ≥ 15 min
+  5. Récupération active : durée courte + FC basse
+  6. Sortie longue : distance > seuil
+  7. Tempo/seuil (FC) : FC moyenne > 80 % FC_max
+  8. Endurance fondamentale : défaut pour les runs
 
 Types de fractionné possibles (retournés par detect_fract_v2) :
   - 'fractionné court'               : blocs < 500 m, 3+ répétitions identiques
@@ -111,8 +112,14 @@ def detect_session_type(
             return "trail"
 
     # ── 4. Fractionné (détection via stream) ─────────────────────────────────
-    min_effort_spd = float(speed_profile.get("p75_kmh", 0.0))
     athlete_mean_spd = float(speed_profile.get("mean_kmh", 0.0))
+    # Pour les profils lents (< ~10.5 km/h), la distribution de vitesses est
+    # resserrée : le p75 est très proche de la moyenne, ce qui rend le critère
+    # de vitesse absolue trop strict. On utilise alors p70 comme plancher.
+    if athlete_mean_spd > 0 and athlete_mean_spd < 10.5:
+        min_effort_spd = float(speed_profile.get("p70_kmh", 0.0))
+    else:
+        min_effort_spd = float(speed_profile.get("p75_kmh", 0.0))
 
     # Résoudre max_block_cv depuis la config utilisateur (pas la config racine)
     if sport_type == "TrailRun":
@@ -138,7 +145,18 @@ def detect_session_type(
         except Exception:
             pass  # en cas d'erreur de parsing, on continue avec les règles suivantes
 
-    # ── 5. Récupération active ────────────────────────────────────────────────
+    # ── 5. Tempo/seuil basé sur l'allure (avant récup pour éviter les
+    #      faux positifs récup à FC basse chez les profils à hr_max élevé ou
+    #      mal calibré). Rattrape les cas où la FC moyenne ne franchit pas
+    #      80% hr_max parce que le profil FC est imprécis ou que l'athlète
+    #      ne pousse pas en FC alors que l'allure est clairement tempo.
+    p80_kmh = float(speed_profile.get("p80_kmh", 0.0))
+    if p80_kmh > 0 and distance_km >= 5 and duration_min >= 15:
+        avg_spd_kmh = (distance_km / duration_min) * 60.0
+        if avg_spd_kmh >= p80_kmh:
+            return "tempo / seuil"
+
+    # ── 6. Récupération active ────────────────────────────────────────────────
     if hr_mean and duration_min > 0:
         if duration_min < recov_max_dur and hr_mean < hr_max * recov_max_hrp:
             return "récupération active"
@@ -146,17 +164,17 @@ def detect_session_type(
         # Pas de FC mais courte sortie légère
         return "récupération active"
 
-    # ── 6. Sortie longue ──────────────────────────────────────────────────────
+    # ── 7. Sortie longue ──────────────────────────────────────────────────────
     if distance_km >= long_run_km:
         return "sortie longue"
 
-    # ── 7. Tempo / seuil (basé sur FC moyenne) ───────────────────────────────
+    # ── 8. Tempo / seuil (basé sur FC moyenne) ───────────────────────────────
     if hr_mean:
         hr_pct = hr_mean / hr_max
         if hr_pct >= 0.80:
             return "tempo / seuil"
 
-    # ── 8. Endurance fondamentale (défaut pour tout run) ──────────────────────
+    # ── 9. Endurance fondamentale (défaut pour tout run) ──────────────────────
     return "endurance fondamentale"
 
 

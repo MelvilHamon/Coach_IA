@@ -513,11 +513,24 @@ def _validate_fractionne(
     # augmente quand la vitesse baisse. L'écart effort/récup est aussi plus faible
     # en absolu pour un coureur lent → ratio naturellement plus bas.
     # Référence : seuils calibrés à ~12 km/h (coureur « rapide »).
+    # Graduation linéaire : speed_factor=1 à 12 km/h (aucune adaptation pour les
+    # profils rapides), plancher à 0.5 pour les profils très lents.
+    speed_factor = 1.0
+    slowness = 0.0
     if athlete_mean_speed_kmh > 0:
-        speed_factor = max(0.6, min(1.0, athlete_mean_speed_kmh / 12.0))
-        max_block_cv = min(0.20, max_block_cv / speed_factor)
-        min_ef_ratio = max(1.20, min_ef_ratio - 0.12 * (1 - speed_factor))
-        min_cv = max(0.12, min_cv - 0.05 * (1 - speed_factor))
+        speed_factor = max(0.5, min(1.0, athlete_mean_speed_kmh / 12.0))
+        slowness = 1.0 - speed_factor  # 0 = rapide, jusqu'à 0.5 = très lent
+
+        # CV intra-bloc : bruit GPS relativement plus élevé à basse vitesse
+        max_block_cv = min(0.22, max_block_cv / speed_factor)
+        # Écart effort/récup plus faible en absolu (moins de « marge » disponible)
+        min_ef_ratio = max(1.18, min_ef_ratio - 0.18 * slowness)
+        # Oscillations globales atténuées par le bruit
+        min_cv = max(0.10, min_cv - 0.08 * slowness)
+        # Récupérations plus variables chez les coureurs lents (pauses, feux,
+        # terrain) — à allure faible le bruit GPS affecte aussi la détection de
+        # fin de bloc, donc la durée de « récup » mesurée fluctue.
+        max_recup_cv = min(1.00, max_recup_cv + 0.60 * slowness)
 
     # Prérequis : au moins un cluster avec 3+ répétitions
     if not any(p["reps"] >= 3 for p in patterns):
@@ -568,10 +581,25 @@ def _validate_fractionne(
     # intervalle, qui ferait exploser le CV si on les incluait.
     #
     # Ce critère est bypassé quand les signaux structurels sont forts :
-    # CV global >= 2× seuil ET ratio effort/récup >= 1.5. Dans ce cas,
-    # la séance est clairement structurée même si les récups sont irrégulières
-    # (feux, côtes, pauses eau…).
-    strong_structural_signal = (cv >= min_cv * 2) and (effort_spd / (recovery_spd + 1e-6) >= 1.5)
+    # - (tous profils) CV global ≥ 2× seuil ET ratio effort/récup ≥ 1.5 ;
+    # - (profils lents uniquement, slowness > 0.1 ~ mean < 10.8 km/h)
+    #   DBSCAN a trouvé ≥ 5 répétitions avec speed_cv_core très bas (< 0.07).
+    #   Réservé aux profils lents car chez les rapides, un run vallonné produit
+    #   régulièrement ces conditions sans être un fractionné.
+    max_reps = max((p.get("reps", 0) for p in patterns), default=0)
+    core_cv_strong = False
+    if not blocks.empty and "cluster" in blocks.columns and "speed_cv_core" in blocks.columns:
+        _valid = blocks[blocks["cluster"] != -1]
+        if not _valid.empty:
+            _best = _valid.groupby("cluster").size().idxmax()
+            _ccv = float(_valid[_valid["cluster"] == _best]["speed_cv_core"].median())
+            core_cv_strong = _ccv < 0.07
+
+    slow_profile_bypass = slowness > 0.1 and max_reps >= 5 and core_cv_strong
+    strong_structural_signal = (
+        (cv >= min_cv * 2 and effort_spd / (recovery_spd + 1e-6) >= 1.5)
+        or slow_profile_bypass
+    )
     if not strong_structural_signal:
         if not recoveries.empty and not blocks.empty and "cluster" in blocks.columns:
             valid_blks = blocks[blocks["cluster"] != -1]
@@ -592,8 +620,14 @@ def _validate_fractionne(
         return False
 
     # ── Critère 6 : vitesse effort > seuil profil athlète (p75) ─────────────
+    # Chez les profils lents (slowness > 0.1), la distribution de vitesses est
+    # resserrée (p75 proche de la moyenne), donc un vrai fractionné peut avoir
+    # un effort à peine au-dessus du p75. Bypass si structure très nette
+    # (≥ 5 reps + speed_cv_core < 0.07). Non appliqué aux profils rapides
+    # pour éviter de classer en fractionné des runs vallonnés réguliers.
     if min_effort_speed_kmh > 0 and effort_spd < min_effort_speed_kmh:
-        return False
+        if not slow_profile_bypass:
+            return False
 
     return True
 

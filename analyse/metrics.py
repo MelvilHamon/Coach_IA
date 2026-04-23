@@ -428,6 +428,94 @@ def compute_athlete_speed_profile(activities_df: pd.DataFrame) -> dict:
     }
 
 
+# ── Profil FC athlète (auto-détection depuis les streams) ────────────────────
+
+def compute_athlete_hr_profile(activities_df: pd.DataFrame, streams_dir: str) -> dict:
+    """
+    Estime hr_max de l'athlète à partir des streams FC.
+
+    Pour chaque activité avec stream valide :
+      - hr_peak = 99ᵉ percentile de FC (robuste aux spikes capteur isolés)
+
+    hr_max_observed = max des hr_peak (sur activités running/velo).
+
+    Filtres anti-artefact :
+      - FC dans [50, 220] bpm (hors plage = capteur pété)
+      - Activité de ≥ 10 min de données FC valides
+      - hr_peak doit être sustained : on prend le 99ᵉ pctile, pas le max brut
+      - hr_max_observed borné à [150, 215] pour éviter les estimés aberrants
+
+    Note : hr_rest n'est PAS estimé ici. La FC la plus basse observée DURANT
+    une activité reflète la phase d'échauffement (FC 70-90 bpm typiquement),
+    pas la vraie FC au repos. Une estimation fiable de hr_rest demande des
+    mesures hors activité (ex. Garmin Body Battery) indisponibles ici.
+
+    Retourne un dict :
+      - hr_max_observed       : FC max robuste observée (int ou None)
+      - computed_from_n_activities : nombre d'activités exploitées
+      - last_updated          : horodatage ISO UTC
+
+    Si aucun stream exploitable → valeurs None et n_activities=0.
+    """
+    from datetime import timezone
+    import os
+
+    result = {
+        "hr_max_observed":            None,
+        "computed_from_n_activities": 0,
+        "last_updated":               pd.Timestamp.now(tz=timezone.utc).isoformat(),
+    }
+
+    if not os.path.isdir(streams_dir) or activities_df.empty:
+        return result
+
+    # On ne considère que les activités Run/Ride/Virtual (cardio endurance)
+    # Exclure randos (FC rarement élevée) et workouts statiques (FC peu fiable)
+    cardio_types = {"Run", "TrailRun", "Ride", "VirtualRun", "VirtualRide"}
+    cardio = activities_df[activities_df["Type"].isin(cardio_types)]
+    if cardio.empty:
+        return result
+
+    peaks = []
+    n_used = 0
+
+    for _, row in cardio.iterrows():
+        try:
+            act_id = int(row["ID"])
+        except (KeyError, ValueError, TypeError):
+            continue
+
+        stream_path = os.path.join(streams_dir, f"{act_id}.csv")
+        if not os.path.exists(stream_path):
+            continue
+
+        try:
+            stream = pd.read_csv(stream_path, usecols=["time_s", "bpm"])
+        except (ValueError, FileNotFoundError):
+            continue
+
+        bpm = stream["bpm"].dropna()
+        bpm = bpm[(bpm >= 50) & (bpm <= 220)]
+        if len(bpm) < 600:  # < 10 min de FC valide → activité trop courte
+            continue
+
+        peaks.append(float(np.percentile(bpm, 99)))
+        n_used += 1
+
+    if not peaks:
+        return result
+
+    # Borner pour éviter les estimés aberrants (capteur pété qui n'a pas été
+    # filtré, ou athlète qui ne pousse jamais → sous-estimé à <150).
+    hr_max_observed = int(round(max(150, min(215, max(peaks)))))
+
+    result.update({
+        "hr_max_observed":            hr_max_observed,
+        "computed_from_n_activities": n_used,
+    })
+    return result
+
+
 # ── Risque blessure ───────────────────────────────────────────────────────────
 
 def compute_injury_risk(
