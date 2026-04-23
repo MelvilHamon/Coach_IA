@@ -118,6 +118,32 @@ export async function renderSettings(container) {
 
   const profileMsg = el('div', { className: 'ca-auth-error', style: { display: 'none', marginTop: '8px' } });
 
+  // Poll l'endpoint de status jusqu'à ce que le recalcul soit terminé (ou
+  // qu'on dépasse ~2 min, auquel cas on laisse l'utilisateur continuer).
+  const pollRecomputeStatus = async () => {
+    const maxAttempts = 60;  // 60 × 2s = 120s max
+    for (let i = 0; i < maxAttempts; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      try {
+        const s = await api.profileRecomputeStatus();
+        if (s.status === 'done') {
+          profileMsg.textContent = 'Profil enregistré. Métriques recalculées.';
+          profileMsg.style.color = 'var(--success)';
+          return;
+        }
+        if (s.status === 'error') {
+          profileMsg.textContent = 'Profil enregistré mais le recalcul a échoué : '
+            + (s.error || 'erreur inconnue');
+          profileMsg.style.color = 'var(--danger)';
+          return;
+        }
+      } catch { /* transient — on réessaie */ }
+    }
+    // Timeout : on ne force pas d'erreur, juste on arrête de suivre.
+    profileMsg.textContent = 'Profil enregistré. Le recalcul continue en arrière-plan.';
+    profileMsg.style.color = 'var(--ink-mid)';
+  };
+
   const profileBtn = el('button', {
     className: 'ca-btn accent',
     onClick: async () => {
@@ -139,13 +165,16 @@ export async function renderSettings(container) {
       try {
         const res = await api.saveProfile(data);
         if (res.ok) {
-          profileMsg.textContent = 'Profil enregistré.';
-          profileMsg.style.color = 'var(--success)';
+          profileMsg.textContent = 'Profil enregistré. Recalcul de vos métriques en cours en fonction de votre profil…';
+          profileMsg.style.color = 'var(--info, #2f6eb5)';
+          profileMsg.style.display = '';
+          // Polling en arrière-plan ; ne bloque pas l'utilisateur.
+          pollRecomputeStatus();
         } else {
           profileMsg.textContent = res.error || 'Erreur';
           profileMsg.style.color = 'var(--danger)';
+          profileMsg.style.display = '';
         }
-        profileMsg.style.display = '';
       } catch (e) {
         profileMsg.textContent = e.message;
         profileMsg.style.color = 'var(--danger)';

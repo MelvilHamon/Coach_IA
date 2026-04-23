@@ -209,6 +209,32 @@ def me(user: dict = Depends(get_current_user)):
     }
 
 
+def _write_recompute_status(user_id: str, status: str, error: str = None):
+    """Écrit l'état du recalcul dans sync_state.json (running / done / error)."""
+    import json
+    try:
+        from api.user_data import get_user_paths
+        paths = get_user_paths(user_id)
+        state_path = os.path.join(paths.base, "sync_state.json")
+        state = {}
+        if os.path.exists(state_path):
+            with open(state_path, encoding="utf-8") as f:
+                state = json.load(f)
+        state["profile_recompute_status"] = status
+        state["profile_recompute_updated_at"] = __import__("datetime").datetime.now(
+            __import__("datetime").timezone.utc
+        ).isoformat()
+        if error:
+            state["profile_recompute_error"] = error
+        elif "profile_recompute_error" in state:
+            del state["profile_recompute_error"]
+        os.makedirs(os.path.dirname(state_path), exist_ok=True)
+        with open(state_path, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass  # non-critique : on ne bloque pas le recalcul pour ça
+
+
 def _reanalyze_after_profile_change(user_id: str):
     """Sync le profil DB → config.json puis relance l'analyse (force=True)."""
     import json
@@ -217,6 +243,7 @@ def _reanalyze_after_profile_change(user_id: str):
     import io
 
     logger = logging.getLogger("coachagent.sync")
+    _write_recompute_status(user_id, "running")
 
     try:
         from api.user_data import get_user_paths
@@ -292,9 +319,11 @@ def _reanalyze_after_profile_change(user_id: str):
         invalidate_cache(["activities", "metrics"], user_id=user_id)
 
         logger.info("[profile:%s] Re-analysis completed after profile update", user_id)
+        _write_recompute_status(user_id, "done")
 
     except Exception as e:
         logger.error("[profile:%s] Re-analysis failed: %s", user_id, e, exc_info=True)
+        _write_recompute_status(user_id, "error", error=str(e))
 
 
 @router.get("/profile")
@@ -307,7 +336,11 @@ def read_profile(user: dict = Depends(get_current_user)):
 def set_profile(body: UserProfileBody, user: dict = Depends(get_current_user)):
     save_user_profile(user["id"], body.model_dump())
 
-    # Mettre à jour config.json et relancer l'analyse en background
+    # Mettre à jour config.json et relancer l'analyse en background.
+    # L'état (running / done / error) est écrit dans sync_state.json et
+    # consultable via GET /api/auth/profile/recompute-status.
+    _write_recompute_status(user["id"], "running")
+
     import threading
     threading.Thread(
         target=_reanalyze_after_profile_change,
@@ -315,7 +348,28 @@ def set_profile(body: UserProfileBody, user: dict = Depends(get_current_user)):
         daemon=True,
     ).start()
 
-    return {"ok": True}
+    return {"ok": True, "recompute_status": "running"}
+
+
+@router.get("/profile/recompute-status")
+def profile_recompute_status(user: dict = Depends(get_current_user)):
+    """Retourne l'état du recalcul des métriques déclenché par save_profile."""
+    import json as _json
+    try:
+        from api.user_data import get_user_paths
+        paths = get_user_paths(user["id"])
+        state_path = os.path.join(paths.base, "sync_state.json")
+        if not os.path.exists(state_path):
+            return {"status": "idle"}
+        with open(state_path, encoding="utf-8") as f:
+            state = _json.load(f)
+        return {
+            "status":     state.get("profile_recompute_status", "idle"),
+            "updated_at": state.get("profile_recompute_updated_at"),
+            "error":      state.get("profile_recompute_error"),
+        }
+    except Exception as e:
+        return {"status": "idle", "error": str(e)}
 
 
 @router.post("/garmin-credentials")
