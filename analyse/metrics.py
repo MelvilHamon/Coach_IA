@@ -399,12 +399,20 @@ def compute_athlete_speed_profile(activities_df: pd.DataFrame) -> dict:
     """
     from datetime import timezone
 
-    # Filtrer les runs plats de distance suffisante
+    # Filtrer les runs plats de distance suffisante.
+    # Exclut aussi les activités étiquetées "Run" mais à allure < 4 km/h
+    # (= > 15 min/km) qui sont en réalité de la marche, des pauses techniques
+    # ou des erreurs GPS — sinon elles tirent les percentiles vers le bas et
+    # faussent à la fois la détection fractionné et les courbes de progression.
     run_types = {"Run"}
+    distances = activities_df["Distance (km)"].fillna(0)
+    durations = activities_df["Temps (min)"].fillna(0)
+    speeds_all = distances / (durations / 60.0).replace(0, pd.NA)
     mask = (
         activities_df["Type"].isin(run_types)
-        & (activities_df["Distance (km)"].fillna(0) > 3)
-        & (activities_df["Temps (min)"].fillna(0) > 0)
+        & (distances > 3)
+        & (durations > 0)
+        & (speeds_all >= 4.0)  # exclut marche & pauses anormales
     )
     runs = activities_df[mask].copy()
 

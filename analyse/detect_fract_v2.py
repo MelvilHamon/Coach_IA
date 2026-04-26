@@ -536,9 +536,51 @@ def _validate_fractionne(
     if not any(p["reps"] >= 3 for p in patterns):
         return False
 
+    # ── Détection précoce d'une structure forte (utilisé pour bypasser des
+    #    critères ratio-based qui sous-performent à allure lente) ─────────────
+    # À allure lente, le bruit GPS et l'inertie limitent l'écart absolu entre
+    # effort et récup, ce qui fait échouer les critères CV global et ef_ratio
+    # même sur des fractionnés évidents (20-40 répétitions claires). Quand la
+    # structure est très nette, on fait confiance au signal structurel et on
+    # skippe les ratios.
+    #
+    # Pour éviter les faux positifs sur des sorties longues à pace variable
+    # (qu'un DBSCAN avide pourrait clusteriser en 30+ "blocs" purement bruités),
+    # on impose deux conditions strictes :
+    # 1. Forte structure interne : ≥ 8 répétitions OU (≥ 5 reps + cv_core < 0.05)
+    # 2. Garde-fou ef_ratio : effort/récup ≥ 1.10 (vrai fractionné même lent
+    #    a au moins 10% d'écart entre effort et récup ; une oscillation pure
+    #    de bruit GPS reste sous 1.05).
+    #
+    # Réservé aux profils lents (slowness > 0.1 ~ mean < 10.8 km/h) pour ne pas
+    # ouvrir la porte aux faux positifs sur les profils rapides où un run
+    # vallonné peut facilement produire ces conditions.
+    max_reps = max((p.get("reps", 0) for p in patterns), default=0)
+    core_cv_value = None
+    if not blocks.empty and "cluster" in blocks.columns and "speed_cv_core" in blocks.columns:
+        _valid = blocks[blocks["cluster"] != -1]
+        if not _valid.empty:
+            _best = _valid.groupby("cluster").size().idxmax()
+            core_cv_value = float(
+                _valid[_valid["cluster"] == _best]["speed_cv_core"].median()
+            )
+
+    structure_strong = (
+        core_cv_value is not None
+        and (
+            max_reps >= 8
+            or (max_reps >= 5 and core_cv_value < 0.05)
+        )
+    )
+    # On retient le flag historique pour la condition simple (≥ 5 reps + 0.07)
+    # qui sert encore au bypass critère 6 (vitesse absolue p75) — moins risqué
+    # car celui-ci n'est qu'un floor de plausibilité.
+    core_cv_strong = core_cv_value is not None and core_cv_value < 0.07
+    slow_profile_bypass = slowness > 0.1 and max_reps >= 5 and core_cv_strong
+
     # ── Critère 1 : CV global de vitesse ─────────────────────────────────────
     cv = float(df["speed_smooth"].std() / (df["speed_smooth"].mean() + 1e-6))
-    if cv < min_cv:
+    if cv < min_cv and not (slowness > 0.1 and structure_strong):
         return False
 
     # ── Critère 2 : ratio effort / récupération ───────────────────────────────
@@ -559,7 +601,12 @@ def _validate_fractionne(
     effort_spd   = _mean_spd(effort_segs)
     recovery_spd = _mean_spd(recovery_segs)
 
-    if recovery_spd <= 0 or effort_spd / recovery_spd < min_ef_ratio:
+    if recovery_spd <= 0:
+        return False
+    ef_ratio = effort_spd / recovery_spd
+    # Floor anti-bruit pour le bypass profils lents (cf. block ci-dessus).
+    soft_ratio_ok = ef_ratio >= 1.10
+    if ef_ratio < min_ef_ratio and not (slowness > 0.1 and structure_strong and soft_ratio_ok):
         return False
 
     # ── Critère 3 : régularité intra-bloc sur noyau central (speed_cv_core) ──
@@ -574,28 +621,9 @@ def _validate_fractionne(
                 return False
 
     # ── Critère 4 : cohérence des récupérations du cluster dominant ──────────
-    # On utilise uniquement les récups entre blocs du cluster dominant
-    # (extract_recoveries), pas toutes les récups de la séance.
-    # Raison : les blocs parasites d'échauffement (frôlant le seuil GMM)
-    # génèrent une récupération anormalement longue avant le premier vrai
-    # intervalle, qui ferait exploser le CV si on les incluait.
-    #
-    # Ce critère est bypassé quand les signaux structurels sont forts :
+    # Bypassé quand les signaux structurels sont forts :
     # - (tous profils) CV global ≥ 2× seuil ET ratio effort/récup ≥ 1.5 ;
-    # - (profils lents uniquement, slowness > 0.1 ~ mean < 10.8 km/h)
-    #   DBSCAN a trouvé ≥ 5 répétitions avec speed_cv_core très bas (< 0.07).
-    #   Réservé aux profils lents car chez les rapides, un run vallonné produit
-    #   régulièrement ces conditions sans être un fractionné.
-    max_reps = max((p.get("reps", 0) for p in patterns), default=0)
-    core_cv_strong = False
-    if not blocks.empty and "cluster" in blocks.columns and "speed_cv_core" in blocks.columns:
-        _valid = blocks[blocks["cluster"] != -1]
-        if not _valid.empty:
-            _best = _valid.groupby("cluster").size().idxmax()
-            _ccv = float(_valid[_valid["cluster"] == _best]["speed_cv_core"].median())
-            core_cv_strong = _ccv < 0.07
-
-    slow_profile_bypass = slowness > 0.1 and max_reps >= 5 and core_cv_strong
+    # - (profils lents) slow_profile_bypass déjà calculé plus haut.
     strong_structural_signal = (
         (cv >= min_cv * 2 and effort_spd / (recovery_spd + 1e-6) >= 1.5)
         or slow_profile_bypass

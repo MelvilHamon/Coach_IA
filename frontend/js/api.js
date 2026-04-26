@@ -32,6 +32,7 @@ export const api = {
   getProfile:  ()                    => _fetch('/api/auth/profile'),
   saveProfile: (profile)             => _post('/api/auth/profile', profile),
   profileRecomputeStatus: ()         => _fetch('/api/auth/profile/recompute-status'),
+  triggerRecompute:       ()         => _post('/api/auth/profile/recompute', {}),
   stravaDisconnect:  ()               => _post('/api/auth/strava/disconnect', {}),
 
   // Activities

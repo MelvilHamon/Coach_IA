@@ -213,7 +213,27 @@ export async function renderSettings(container) {
         el('label', { style: { fontSize: '11px' } }, 'Z5'), z5,
       ),
     ),
-    el('div', { style: { marginTop: '12px' } }, profileBtn),
+    el('div', { style: { marginTop: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
+      profileBtn,
+      el('button', {
+        className: 'ca-btn',
+        title: 'Relance l\'analyse complète sans modifier le profil. '
+             + 'Utile après un déploiement avec nouvelle logique de classification.',
+        onClick: async () => {
+          profileMsg.style.display = 'none';
+          profileMsg.textContent = 'Recalcul de vos métriques en cours en fonction de votre profil…';
+          profileMsg.style.color = 'var(--info, #2f6eb5)';
+          profileMsg.style.display = '';
+          try {
+            await api.triggerRecompute();
+            pollRecomputeStatus();
+          } catch (e) {
+            profileMsg.textContent = e.message;
+            profileMsg.style.color = 'var(--danger)';
+          }
+        },
+      }, 'Recalculer mes métriques'),
+    ),
     profileMsg,
   );
   container.appendChild(profileSection);

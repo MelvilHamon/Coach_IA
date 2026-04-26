@@ -351,6 +351,22 @@ def set_profile(body: UserProfileBody, user: dict = Depends(get_current_user)):
     return {"ok": True, "recompute_status": "running"}
 
 
+@router.post("/profile/recompute")
+def trigger_recompute(user: dict = Depends(get_current_user)):
+    """Déclenche manuellement un recalcul forcé des métriques de l'utilisateur.
+    Utile pour appliquer les nouvelles règles de classification sans avoir
+    à modifier son profil physiologique."""
+    _write_recompute_status(user["id"], "running")
+
+    import threading
+    threading.Thread(
+        target=_reanalyze_after_profile_change,
+        args=(user["id"],),
+        daemon=True,
+    ).start()
+    return {"ok": True, "recompute_status": "running"}
+
+
 @router.get("/profile/recompute-status")
 def profile_recompute_status(user: dict = Depends(get_current_user)):
     """Retourne l'état du recalcul des métriques déclenché par save_profile."""

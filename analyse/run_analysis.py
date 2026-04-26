@@ -22,6 +22,16 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 
+# ── Versioning de la classification ───────────────────────────────────────────
+# À incrémenter à chaque changement significatif dans la logique de
+# classification (detect_session_type / detect_fract_v2 / seuils par défaut).
+# Un user dont le sync_state.json contient une version inférieure verra son
+# enriched.csv intégralement régénéré au prochain run_analysis (force=True
+# implicite). Ainsi un deploy avec bump de version applique les nouvelles
+# règles à tous les utilisateurs sans intervention manuelle.
+CLASSIFICATION_VERSION = 4
+
+
 # ── Chemins ───────────────────────────────────────────────────────────────────
 
 _ROOT        = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -228,6 +238,24 @@ def run_analysis(force: bool = False, data_dir: str = None, config_path: str = N
     df = df.sort_values("Date").reset_index(drop=True)
     print(f"Activités chargées : {len(df)}")
 
+    # ── Bump de la version de classification ─────────────────────────────────
+    # Si la version stockée pour cet user est < CLASSIFICATION_VERSION, on
+    # force un recalcul complet pour appliquer les nouvelles règles. Ça permet
+    # de déployer une nouvelle logique de classification et que tous les users
+    # bénéficient de la mise à jour au prochain sync (sans intervention).
+    state = {}
+    if os.path.exists(_sync_state):
+        try:
+            with open(_sync_state) as f:
+                state = json.load(f)
+        except Exception:
+            state = {}
+    stored_version = int(state.get("classification_version", 0) or 0)
+    if stored_version < CLASSIFICATION_VERSION:
+        print(f"Classification : bump version {stored_version} → "
+              f"{CLASSIFICATION_VERSION}, recalcul complet forcé.")
+        force = True
+
     # ── Mise à jour PRÉALABLE du profil vitesse athlète ───────────────────────
     # Calculé AVANT la classification pour que la détection fractionné/seuil
     # utilise des seuils adaptés dès le premier passage (fix du feedback loop).
@@ -433,6 +461,7 @@ def run_analysis(force: bool = False, data_dir: str = None, config_path: str = N
             state = json.load(f)
     state["analysis_last_run"] = datetime.now(timezone.utc).isoformat()
     state["analysis_activities_count"] = len(df_enriched)
+    state["classification_version"] = CLASSIFICATION_VERSION
     os.makedirs(os.path.dirname(_sync_state), exist_ok=True)
     with open(_sync_state, "w") as f:
         json.dump(state, f, indent=2, ensure_ascii=False)

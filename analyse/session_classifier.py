@@ -103,7 +103,16 @@ def detect_session_type(
             config=cfg,
         )
 
-    # ── 3. Trail (running uniquement) ────────────────────────────────────────
+    # ── 3. Outlier : "Run" Strava à allure de marche (< 4 km/h ~ > 15 min/km)
+    # Probable marche, randonnée mal taggée, ou pause technique. On les classe
+    # en "autre" pour les sortir des agrégats running (profil vitesse,
+    # progression, ACWR running). L'activité reste visible dans l'historique.
+    if distance_km > 0 and duration_min > 0:
+        avg_spd_kmh = (distance_km / duration_min) * 60.0
+        if avg_spd_kmh < 4.0:
+            return "autre"
+
+    # ── 4. Trail (running uniquement) ────────────────────────────────────────
     if sport_type == "TrailRun":
         return "trail"
     if distance_km > 0:
