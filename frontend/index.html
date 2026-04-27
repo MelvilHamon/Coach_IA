@@ -9,6 +9,12 @@
   <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@300;400;500&family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,400&family=JetBrains+Mono:wght@300;400;500&family=Lora:ital,wght@0,400;0,500;1,400;1,500&family=Inter:wght@200;300;400&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="css/style.css?v=4">
+  <style>
+    .ca-lang-switch { display: inline-flex; gap: 0; margin-left: 8px; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+    .ca-lang-btn { background: transparent; border: none; padding: 3px 8px; cursor: pointer; font-size: 11px; font-family: inherit; color: var(--ink-mid); font-weight: 500; letter-spacing: 0.05em; }
+    .ca-lang-btn.active { background: var(--ink); color: var(--bg); }
+    .ca-lang-btn:not(.active):hover { background: var(--border); }
+  </style>
 </head>
 <body>
 
@@ -16,24 +22,24 @@
   <div id="auth-page" class="ca-auth-page" style="display:none;">
     <div class="ca-auth-card">
       <div class="ca-auth-logo">Pace<em>Pilot</em> <img src="/img/compatible_strava.svg" alt="Compatible with Strava" class="ca-strava-badge"></div>
-      <p class="ca-auth-subtitle">Ton copilote de course</p>
+      <p class="ca-auth-subtitle" data-i18n="auth.subtitle">Ton copilote de course</p>
 
       <!-- Step 1: Email -->
       <form id="otp-email-form" class="ca-auth-form">
-        <input type="email" id="otp-email" class="ca-input" placeholder="Email" required autocomplete="email">
+        <input type="email" id="otp-email" class="ca-input" placeholder="Email" data-i18n-placeholder="auth.emailPlaceholder" required autocomplete="email">
         <div id="otp-email-error" class="ca-auth-error" style="display:none;"></div>
-        <button type="submit" class="ca-btn accent ca-auth-btn">Recevoir un code</button>
+        <button type="submit" class="ca-btn accent ca-auth-btn" data-i18n="auth.sendCode">Recevoir un code</button>
       </form>
 
       <!-- Step 2: Code -->
       <form id="otp-code-form" class="ca-auth-form" style="display:none;">
-        <p class="ca-auth-hint">Un code a été envoyé à <strong id="otp-email-display"></strong></p>
-        <input type="text" id="otp-code" class="ca-input ca-otp-input" placeholder="Code à 6 chiffres" required autocomplete="one-time-code" inputmode="numeric" maxlength="6" pattern="[0-9]{6}">
+        <p class="ca-auth-hint"><span data-i18n="auth.codeSent">Un code a été envoyé à</span> <strong id="otp-email-display"></strong></p>
+        <input type="text" id="otp-code" class="ca-input ca-otp-input" placeholder="Code à 6 chiffres" data-i18n-placeholder="auth.codePlaceholder" required autocomplete="one-time-code" inputmode="numeric" maxlength="6" pattern="[0-9]{6}">
         <div id="otp-code-error" class="ca-auth-error" style="display:none;"></div>
-        <button type="submit" class="ca-btn accent ca-auth-btn">Valider</button>
+        <button type="submit" class="ca-btn accent ca-auth-btn" data-i18n="auth.verify">Valider</button>
         <div class="ca-auth-toggle">
-          <span id="otp-back" class="ca-auth-link">Changer d'email</span>
-          <span id="otp-resend" class="ca-auth-link">Renvoyer le code</span>
+          <span id="otp-back" class="ca-auth-link" data-i18n="auth.changeEmail">Changer d'email</span>
+          <span id="otp-resend" class="ca-auth-link" data-i18n="auth.resendCode">Renvoyer le code</span>
         </div>
       </form>
     </div>
@@ -49,33 +55,37 @@
         <div class="ca-header-meta">
           <span id="header-user"></span>
           <span id="header-date">—</span>
-          <span id="header-count">— activités</span>
+          <span id="header-count">—</span>
           <span id="header-sync" class="ca-sync-indicator">—</span>
-          <button id="sync-btn" class="ca-sync-btn" title="Synchroniser">↻</button>
-          <button id="logout-btn" class="ca-sync-btn" title="Déconnexion">⏻</button>
+          <button id="sync-btn" class="ca-sync-btn" data-i18n-title="header.sync" title="Synchroniser">↻</button>
+          <button id="logout-btn" class="ca-sync-btn" data-i18n-title="header.logout" title="Déconnexion">⏻</button>
+          <span class="ca-lang-switch">
+            <button class="ca-lang-btn" data-lang="fr">FR</button>
+            <button class="ca-lang-btn" data-lang="en">EN</button>
+          </span>
         </div>
       </div>
     </header>
 
     <!-- Navigation -->
     <nav class="ca-nav">
-      <button class="ca-nav-tab active" data-section="overview">Vue d'ensemble</button>
-      <button class="ca-nav-tab" data-section="history">Historique</button>
-      <button class="ca-nav-tab" data-section="profil">Profil</button>
-      <button class="ca-nav-tab" data-section="progression">Progression</button>
-      <button class="ca-nav-tab" data-section="charge">Charge</button>
-      <button class="ca-nav-tab" data-section="calendrier">Calendrier</button>
-      <button class="ca-nav-tab" data-section="analyse">Analyse</button>
-      <button class="ca-nav-tab" data-section="settings">Paramètres</button>
+      <button class="ca-nav-tab active" data-section="overview" data-i18n="nav.overview">Vue d'ensemble</button>
+      <button class="ca-nav-tab" data-section="history" data-i18n="nav.history">Historique</button>
+      <button class="ca-nav-tab" data-section="profil" data-i18n="nav.profil">Profil</button>
+      <button class="ca-nav-tab" data-section="progression" data-i18n="nav.progression">Progression</button>
+      <button class="ca-nav-tab" data-section="charge" data-i18n="nav.charge">Charge</button>
+      <button class="ca-nav-tab" data-section="calendrier" data-i18n="nav.calendrier">Calendrier</button>
+      <button class="ca-nav-tab" data-section="analyse" data-i18n="nav.analyse">Analyse</button>
+      <button class="ca-nav-tab" data-section="settings" data-i18n="nav.settings">Paramètres</button>
       <div class="ca-sport-selector">
-        <button class="ca-sport-btn active" data-sport="run" title="Course à pied">Run</button>
-        <button class="ca-sport-btn" data-sport="velo" title="Vélo">Vélo</button>
+        <button class="ca-sport-btn active" data-sport="run" data-i18n-title="nav.runTitle" data-i18n="nav.run" title="Course à pied">Run</button>
+        <button class="ca-sport-btn" data-sport="velo" data-i18n-title="nav.bikeTitle" data-i18n="nav.bike" title="Vélo">Vélo</button>
       </div>
     </nav>
 
     <!-- Contenu principal -->
     <main id="page-content" class="ca-main">
-      <div class="ca-loading">Chargement…</div>
+      <div class="ca-loading" data-i18n="common.loading">Chargement…</div>
     </main>
 
   </div>
@@ -83,8 +93,8 @@
   <!-- ══════ Modal: Strava onboarding (première connexion) ══════ -->
   <div id="strava-onboarding-modal" class="ca-modal-overlay" style="display:none;">
     <div class="ca-modal-card">
-      <div class="ca-modal-title">Bienvenue sur PacePilot !</div>
-      <p class="ca-modal-text">
+      <div class="ca-modal-title" data-i18n="onboarding.welcome">Bienvenue sur PacePilot !</div>
+      <p class="ca-modal-text" data-i18n="onboarding.stravaIntro">
         Pour commencer, connecte ton compte <strong>Strava</strong> afin de synchroniser automatiquement tes activités.
       </p>
       <img
@@ -93,14 +103,14 @@
         alt="Connect with Strava"
         class="ca-modal-strava-btn"
       >
-      <button id="strava-onboarding-skip" class="ca-modal-skip">Plus tard</button>
+      <button id="strava-onboarding-skip" class="ca-modal-skip" data-i18n="onboarding.later">Plus tard</button>
     </div>
   </div>
 
   <!-- Scripts -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.plot.ly/plotly-2.35.0.min.js" charset="utf-8"></script>
-  <script type="module" src="js/app.js?v=4"></script>
+  <script type="module" src="js/app.js?v=7"></script>
 
 </body>
 </html>

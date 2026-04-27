@@ -7,7 +7,8 @@ import {
   el, sectionTitle, badge, fmt, fmtDate, loading, empty,
   acwrColor, riskColor, reviewBox,
 } from '../components.js';
-import { getCurrentSport } from '../state.js';
+import { getCurrentSport, setPendingActivityId } from '../state.js';
+import { t } from '../i18n.js';
 
 let _currentPeriod = 'all';
 let _currentType = null;
@@ -35,7 +36,7 @@ export async function renderHistory(container) {
 
     // ── Controls ──
     const typeSelect = el('select', { className: 'ca-select', onChange: () => { _currentType = typeSelect.value || null; refresh(); } },
-      el('option', { value: '' }, 'Tous les types'),
+      el('option', { value: '' }, t('history.allTypes')),
     );
     for (const t of typesRes.types) {
       typeSelect.appendChild(el('option', { value: t }, t));
@@ -50,7 +51,7 @@ export async function renderHistory(container) {
           btn.classList.add('active');
           refresh();
         },
-      }, p === 'all' ? 'Tout' : p);
+      }, p === 'all' ? t('history.all') : p);
       return btn;
     });
 
@@ -66,11 +67,11 @@ export async function renderHistory(container) {
 
     // ── Review section ──
     const reviewSection = el('div', { className: 'ca-section' },
-      sectionTitle('Review coach'),
+      sectionTitle(t('common.reviewCoach')),
     );
     _reviewSelect = el('select', { className: 'ca-select', style: { marginBottom: '12px' } });
     const reviewContent = el('div');
-    const genBtn = el('button', { className: 'ca-btn accent', onClick: generateReview }, 'Générer / Régénérer');
+    const genBtn = el('button', { className: 'ca-btn accent', onClick: generateReview }, t('common.generateOrRegenerate'));
 
     reviewSection.appendChild(el('div', { style: { display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '16px' } },
       el('div', { className: 'ca-select-wrap' }, _reviewSelect),
@@ -95,7 +96,7 @@ export async function renderHistory(container) {
     async function generateReview() {
       const id = _reviewSelect?.value;
       if (!id) return;
-      genBtn.textContent = 'Génération…';
+      genBtn.textContent = t('common.generating');
       genBtn.disabled = true;
       try {
         const res = await api.generateReview(Number(id));
@@ -108,7 +109,7 @@ export async function renderHistory(container) {
       } catch (e) {
         reviewContent.appendChild(el('div', { className: 'ca-error' }, e.message));
       } finally {
-        genBtn.textContent = 'Générer / Régénérer';
+        genBtn.textContent = t('common.generateOrRegenerate');
         genBtn.disabled = false;
       }
     }
@@ -131,7 +132,7 @@ export async function renderHistory(container) {
         if (res.review) {
           target.appendChild(reviewBox(res.review));
         } else {
-          target.appendChild(el('div', { className: 'ca-empty' }, 'Pas de review — cliquer pour en générer une.'));
+          target.appendChild(el('div', { className: 'ca-empty' }, t('common.noReview')));
         }
       } catch {
         target.innerHTML = '';
@@ -146,7 +147,7 @@ export async function renderHistory(container) {
 
   } catch (err) {
     container.innerHTML = '';
-    container.appendChild(el('div', { className: 'ca-error' }, `Erreur : ${err.message}`));
+    container.appendChild(el('div', { className: 'ca-error' }, t('common.errorPrefix', { msg: err.message })));
   }
 }
 
@@ -154,16 +155,16 @@ function renderTable(container, activities) {
   container.innerHTML = '';
 
   if (!activities.length) {
-    container.appendChild(empty('Aucune activité pour cette sélection.'));
+    container.appendChild(empty(t('history.noActSelection')));
     return;
   }
 
   const sport = getCurrentSport();
-  const speedCol = sport === 'velo' ? 'Vitesse' : 'Allure';
+  const speedCol = sport === 'velo' ? t('common.speed') : t('common.pace');
 
   const thead = el('thead', {},
     el('tr', {},
-      ...['Date', 'Nom', 'Type', 'Distance', speedCol, 'TRIMP', 'ACWR', 'Risque'].map(h =>
+      ...[t('common.date'), 'Nom', t('common.type'), t('common.distance'), speedCol, 'TRIMP', 'ACWR', t('history.cols.risk')].map(h =>
         el('th', {}, h),
       ),
     ),
@@ -179,7 +180,14 @@ function renderTable(container, activities) {
       speedDisplay = fmt(a.distance_km / (a.temps_min / 60), 1) + ' km/h';
     }
 
-    tbody.appendChild(el('tr', {},
+    const row = el('tr', {
+      style: { cursor: 'pointer' },
+      title: t('history.seeAnalyse'),
+      onClick: () => {
+        setPendingActivityId(a.id);
+        window.location.hash = 'analyse';
+      },
+    },
       el('td', { className: 'dim' }, fmtDate(a.date)),
       el('td', { className: 'dim' }, (a.nom || '').slice(0, 30)),
       el('td', {}, badge(a.session_type)),
@@ -188,7 +196,8 @@ function renderTable(container, activities) {
       el('td', {}, fmt(a.trimp, 0)),
       el('td', { style: { color: acwrColor(acwr_v) } }, fmt(acwr_v, 2)),
       el('td', { style: { color: riskColor(risk), fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.1em' } }, risk),
-    ));
+    );
+    tbody.appendChild(row);
   }
 
   container.appendChild(el('div', { className: 'ca-table-wrap' },

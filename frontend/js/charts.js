@@ -2,6 +2,8 @@
  * charts.js — Wrapper Plotly.js avec le design system CoachAgent.
  */
 
+import { t } from './i18n.js';
+
 const COLORS = {
   bg:       '#F7F4F0',
   card:     '#FFFFFF',
@@ -51,16 +53,16 @@ function safePlot(container, traces, layout, config) {
   if (typeof Plotly === 'undefined') {
     console.error('Plotly is not loaded — charts cannot render.');
     if (typeof container === 'string') container = document.getElementById(container);
-    if (container) container.innerHTML = '<div class="ca-empty">Plotly non chargé — vérifier la connexion.</div>';
+    if (container) container.innerHTML = `<div class="ca-empty">${t('charts.noPlotly')}</div>`;
     return;
   }
   // Check for empty data — handle both cartesian (y) and pie (values) traces
-  const hasData = traces.some(t =>
-    (t.y && t.y.length > 0) || (t.values && t.values.length > 0)
+  const hasData = traces.some(tr =>
+    (tr.y && tr.y.length > 0) || (tr.values && tr.values.length > 0)
   );
   if (!traces.length || !hasData) {
     if (typeof container === 'string') container = document.getElementById(container);
-    if (container) container.innerHTML = '<div class="ca-empty">Données insuffisantes</div>';
+    if (container) container.innerHTML = `<div class="ca-empty">${t('charts.notEnough')}</div>`;
     return;
   }
   Plotly.newPlot(container, traces, layout, config);
@@ -87,7 +89,7 @@ export function plotVolume(container, data) {
     {
       x, y: km,
       type: 'bar',
-      name: 'km / semaine',
+      name: t('charts.kmPerWeek'),
       marker: { color: COLORS.dark, opacity: 0.12, line: { color: COLORS.dark, width: 1 } },
       yaxis: 'y',
     },
@@ -256,7 +258,7 @@ export function plotEf(container, data) {
     },
     {
       x: pts.map(p => p.date), y: pts.map(p => p.ef_roll),
-      type: 'scatter', mode: 'lines', name: 'Moy. 10 séances',
+      type: 'scatter', mode: 'lines', name: t('charts.avg10'),
       line: { color: COLORS.ink, width: 2 },
       fill: 'tozeroy', fillcolor: 'rgba(20,20,20,0.04)',
     },
@@ -285,7 +287,7 @@ export function plotVo2(container, data) {
     },
     {
       x: pts.map(p => p.date), y: pts.map(p => p.vo2_roll),
-      type: 'scatter', mode: 'lines', name: 'Tendance',
+      type: 'scatter', mode: 'lines', name: t('charts.trend'),
       line: { color: COLORS.ink, width: 2 },
       fill: 'tozeroy', fillcolor: 'rgba(20,20,20,0.04)',
     },
@@ -311,17 +313,17 @@ export function plotFitness(container, data) {
   const traces = [
     {
       x, y: pts.map(p => p.ctl),
-      type: 'scatter', mode: 'lines', name: 'CTL (Fitness)',
+      type: 'scatter', mode: 'lines', name: t('charts.ctlFitness'),
       line: { color: COLORS.success, width: 2 },
     },
     {
       x, y: pts.map(p => p.atl),
-      type: 'scatter', mode: 'lines', name: 'ATL (Fatigue)',
+      type: 'scatter', mode: 'lines', name: t('charts.atlFatigue'),
       line: { color: COLORS.accent, width: 2 },
     },
     {
       x, y: pts.map(p => p.tsb),
-      type: 'scatter', mode: 'lines', name: 'TSB (Form)',
+      type: 'scatter', mode: 'lines', name: t('charts.tsbForm'),
       line: { color: COLORS.ink, width: 1.5, dash: 'dot' },
       fill: 'tozeroy',
       fillcolor: 'rgba(20,20,20,0.04)',
@@ -438,7 +440,7 @@ export function plotGap(container, data) {
 
 export function plotZones(container, zones) {
   if (!zones || !Object.keys(zones).length) {
-    container.innerHTML = '<div class="ca-empty">FC non disponible</div>';
+    container.innerHTML = `<div class="ca-empty">${t('charts.noHr')}</div>`;
     return;
   }
 
@@ -891,7 +893,7 @@ export function plotPower(container, powerData, altData, opts = {}) {
 
 export function plotSplits(container, splitsData) {
   if (!splitsData || !splitsData.splits || !splitsData.splits.length) {
-    container.innerHTML = '<div class="ca-empty">Splits non disponibles</div>';
+    container.innerHTML = `<div class="ca-empty">${t('charts.noSplits')}</div>`;
     return;
   }
 
@@ -960,19 +962,19 @@ export function plotPolarizedBar(container, pctEF, pctSeuil) {
       x: [pctEF], y: [''],
       type: 'bar', orientation: 'h',
       marker: { color: COLORS.success },
-      name: 'Endurance fondamentale',
+      name: t('charts.enduranceFond'),
       text: [`${pctEF.toFixed(0)}%`], textposition: 'inside',
       textfont: { color: '#fff', family: FONT, size: 14 },
-      hovertemplate: 'Endurance : %{x:.1f}%<extra></extra>',
+      hovertemplate: t('charts.hoverEndurance'),
     },
     {
       x: [pctSeuil], y: [''],
       type: 'bar', orientation: 'h',
       marker: { color: COLORS.danger },
-      name: 'Seuil et +',
+      name: t('charts.thresholdPlus'),
       text: [`${pctSeuil.toFixed(0)}%`], textposition: 'inside',
       textfont: { color: '#fff', family: FONT, size: 14 },
-      hovertemplate: 'Seuil+ : %{x:.1f}%<extra></extra>',
+      hovertemplate: t('charts.hoverThreshold'),
     },
   ];
 

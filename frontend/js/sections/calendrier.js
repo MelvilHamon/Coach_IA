@@ -6,19 +6,15 @@
 
 import { api } from '../api.js';
 import { el, fmt, loading } from '../components.js';
+import { t } from '../i18n.js';
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-const DAY_NAMES = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
-const MONTH_NAMES = [
-  'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
-  'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre',
-];
-const MONTH_SHORT = [
-  'Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin',
-  'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc',
-];
+const DAY_NAMES = () => t('calendrier.days');
+const MONTH_NAMES = () => t('calendrier.months');
+const MONTH_SHORT = () => t('calendrier.monthsShort');
 
+// Plan types remain in French (canonical session_type values used by backend)
 const PLAN_TYPES = [
   'Endurance fondamentale', 'Seuil', 'Fractionné court',
   'Fractionné moyen', 'Fractionné long', 'Trail', 'Récupération active',
@@ -205,10 +201,10 @@ function _activityCardWeek(a) {
   const name = a.nom || a.session_type || 'Activité';
 
   const rows = [];
-  if (a.distance_km != null) rows.push(['Distance', `${fmt(a.distance_km, 1)} km`]);
-  if (a.temps_min != null) rows.push(['Durée', _fmtDurationShort(a.temps_min)]);
-  if (a.pace_display) rows.push(['Allure', `${a.pace_display} /km`]);
-  if (a.fc_bpm || a['Fréquence cardiaque (bpm)']) rows.push(['FC moy.', `${fmt(a.fc_bpm || a['Fréquence cardiaque (bpm)'], 0)} bpm`]);
+  if (a.distance_km != null) rows.push([t('common.distance'), `${fmt(a.distance_km, 1)} km`]);
+  if (a.temps_min != null) rows.push([t('common.duration'), _fmtDurationShort(a.temps_min)]);
+  if (a.pace_display) rows.push([t('common.pace'), `${a.pace_display} /km`]);
+  if (a.fc_bpm || a['Fréquence cardiaque (bpm)']) rows.push([t('common.avgHr'), `${fmt(a.fc_bpm || a['Fréquence cardiaque (bpm)'], 0)} bpm`]);
   if (a.denivele_m || a['Dénivelé (m)']) rows.push(['D+', `${fmt(a.denivele_m || a['Dénivelé (m)'], 0)} m`]);
   if (a.trimp) rows.push(['TRIMP', fmt(a.trimp, 0)]);
   if (a.efficiency_factor) rows.push(['EF', fmt(a.efficiency_factor, 3)]);
@@ -485,7 +481,7 @@ function _buildWorkoutForm(existing, onSave, onCancel, defaultDate) {
       if (!dateInput.value) return;
       msgEl.style.display = 'none';
       saveBtn.disabled = true;
-      saveBtn.textContent = 'Enregistrement...';
+      saveBtn.textContent = t('common.saving');
       try {
         const isRenfo = _isRenfo(typeSelect.value);
         const payload = {
@@ -522,18 +518,18 @@ function _buildWorkoutForm(existing, onSave, onCancel, defaultDate) {
         msgEl.style.display = '';
       } finally {
         saveBtn.disabled = false;
-        saveBtn.textContent = isEdit ? 'Modifier' : 'Enregistrer';
+        saveBtn.textContent = isEdit ? t('common.edit') : t('common.save');
       }
     },
-  }, isEdit ? 'Modifier' : 'Enregistrer');
+  }, isEdit ? t('common.edit') : t('common.save'));
 
-  const cancelBtn = el('button', { className: 'ca-btn', onClick: onCancel }, 'Annuler');
+  const cancelBtn = el('button', { className: 'ca-btn', onClick: onCancel }, t('common.cancel'));
 
   const form = el('div', { className: 'ca-plan-form' },
-    el('div', { className: 'cg-modal-title' }, isEdit ? 'Modifier la séance' : 'Planifier une séance'),
+    el('div', { className: 'cg-modal-title' }, isEdit ? t('calendrier.editSession') : t('calendrier.planSession')),
     el('div', { className: 'ca-plan-row' },
-      el('label', { className: 'ca-plan-label' }, 'Date'), dateInput,
-      el('label', { className: 'ca-plan-label', style: { marginLeft: '8px' } }, 'Type'), typeSelect,
+      el('label', { className: 'ca-plan-label' }, t('common.date')), dateInput,
+      el('label', { className: 'ca-plan-label', style: { marginLeft: '8px' } }, t('common.type')), typeSelect,
     ),
     cardioFields,
     strengthFields,
@@ -1007,8 +1003,8 @@ function _renderMonth(calArea, activities, viewYear, viewMonth, rerender) {
 
   const grid = el('div', { className: 'cg-grid' });
 
-  for (const name of DAY_NAMES) grid.appendChild(el('div', { className: 'cg-col-header' }, name));
-  grid.appendChild(el('div', { className: 'cg-col-header cg-col-totals-header' }, 'Totaux hebdo'));
+  for (const name of DAY_NAMES()) grid.appendChild(el('div', { className: 'cg-col-header' }, name));
+  grid.appendChild(el('div', { className: 'cg-col-header cg-col-totals-header' }, t('calendrier.weekTotals')));
 
   for (const week of rows) {
     for (let i = 0; i < 7; i++) {
@@ -1018,11 +1014,11 @@ function _renderMonth(calArea, activities, viewYear, viewMonth, rerender) {
     const totCell = el('div', { className: 'cg-cell cg-cell-totals' });
     if (wt.count > 0) {
       totCell.appendChild(el('div', { className: 'cg-tot-row' },
-        el('span', { className: 'cg-tot-label' }, 'DISTANCE'),
+        el('span', { className: 'cg-tot-label' }, t('calendrier.colDistance')),
         el('span', { className: 'cg-tot-value' }, `${fmt(wt.dist, 2)} km`),
       ));
       totCell.appendChild(el('div', { className: 'cg-tot-row' },
-        el('span', { className: 'cg-tot-label' }, 'DURÉE'),
+        el('span', { className: 'cg-tot-label' }, t('calendrier.colDuration')),
         el('span', { className: 'cg-tot-value' }, _fmtDuration(wt.dur)),
       ));
     }
@@ -1052,10 +1048,10 @@ function _renderWeek(calArea, activities, monday, rerender) {
 
   for (let i = 0; i < 7; i++) {
     const d = days[i];
-    const label = `${DAY_NAMES[i]} ${d.getDate()} ${MONTH_SHORT[d.getMonth()]}`;
+    const label = `${DAY_NAMES()[i]} ${d.getDate()} ${MONTH_SHORT()[d.getMonth()]}`;
     grid.appendChild(el('div', { className: 'cg-col-header' }, label));
   }
-  grid.appendChild(el('div', { className: 'cg-col-header cg-col-totals-header' }, 'Totaux'));
+  grid.appendChild(el('div', { className: 'cg-col-header cg-col-totals-header' }, t('calendrier.totals')));
 
   for (let i = 0; i < 7; i++) {
     const d = days[i];
@@ -1098,13 +1094,13 @@ function _renderWeek(calArea, activities, monday, rerender) {
   const totCell = el('div', { className: 'cg-cell cg-cell-totals' });
   if (wt.count > 0) {
     totCell.appendChild(el('div', { className: 'cg-tot-row' },
-      el('span', { className: 'cg-tot-label' }, 'ACTIVITÉS'), el('span', { className: 'cg-tot-value' }, `${wt.count}`),
+      el('span', { className: 'cg-tot-label' }, t('calendrier.colActivities')), el('span', { className: 'cg-tot-value' }, `${wt.count}`),
     ));
     totCell.appendChild(el('div', { className: 'cg-tot-row' },
-      el('span', { className: 'cg-tot-label' }, 'DISTANCE'), el('span', { className: 'cg-tot-value' }, `${fmt(wt.dist, 2)} km`),
+      el('span', { className: 'cg-tot-label' }, t('calendrier.colDistance')), el('span', { className: 'cg-tot-value' }, `${fmt(wt.dist, 2)} km`),
     ));
     totCell.appendChild(el('div', { className: 'cg-tot-row' },
-      el('span', { className: 'cg-tot-label' }, 'DURÉE'), el('span', { className: 'cg-tot-value' }, _fmtDuration(wt.dur)),
+      el('span', { className: 'cg-tot-label' }, t('calendrier.colDuration')), el('span', { className: 'cg-tot-value' }, _fmtDuration(wt.dur)),
     ));
   }
   grid.appendChild(totCell);
@@ -1125,7 +1121,7 @@ function _renderYear(calArea, activities, viewYear) {
 
   for (let month = 0; month < 12; month++) {
     const monthEl = el('div', { className: 'cg-year-month' });
-    monthEl.appendChild(el('div', { className: 'cg-year-month-title' }, MONTH_NAMES[month]));
+    monthEl.appendChild(el('div', { className: 'cg-year-month-title' }, MONTH_NAMES()[month]));
 
     const hdr = el('div', { className: 'cg-mini-grid' });
     for (const n of ['L','M','M','J','V','S','D']) {
@@ -1211,7 +1207,7 @@ export async function renderCalendrier(container) {
 
     function _updateLabel() {
       if (currentView === 'month') {
-        monthLabel.textContent = `${MONTH_NAMES[viewMonth]} ${viewYear}`;
+        monthLabel.textContent = `${MONTH_NAMES()[viewMonth]} ${viewYear}`;
       } else if (currentView === 'week') {
         const sun = new Date(viewMonday);
         sun.setDate(sun.getDate() + 6);
@@ -1219,9 +1215,9 @@ export async function renderCalendrier(container) {
         const sl = sun.getDate();
         const sameMonth = viewMonday.getMonth() === sun.getMonth();
         if (sameMonth) {
-          monthLabel.textContent = `${ml} - ${sl} ${MONTH_NAMES[viewMonday.getMonth()]} ${viewMonday.getFullYear()}`;
+          monthLabel.textContent = `${ml} - ${sl} ${MONTH_NAMES()[viewMonday.getMonth()]} ${viewMonday.getFullYear()}`;
         } else {
-          monthLabel.textContent = `${ml} ${MONTH_SHORT[viewMonday.getMonth()]} - ${sl} ${MONTH_SHORT[sun.getMonth()]} ${sun.getFullYear()}`;
+          monthLabel.textContent = `${ml} ${MONTH_SHORT()[viewMonday.getMonth()]} - ${sl} ${MONTH_SHORT()[sun.getMonth()]} ${sun.getFullYear()}`;
         }
       } else {
         monthLabel.textContent = `${viewYear}`;
@@ -1257,13 +1253,13 @@ export async function renderCalendrier(container) {
     }
 
     // ── Control bar ──────────────────────────────────────────────────────
-    const todayBtn = el('button', { className: 'ca-btn', onClick: _goToday }, "Aujourd'hui");
+    const todayBtn = el('button', { className: 'ca-btn', onClick: _goToday }, t('calendrier.today'));
     const prevBtn  = el('button', { className: 'ca-btn', onClick: _goPrev }, '\u25C0');
     const nextBtn  = el('button', { className: 'ca-btn', onClick: _goNext }, '\u25B6');
 
     const viewGroup = el('div', { className: 'ca-radio-group' });
     const viewBtns = {};
-    for (const [key, label] of [['week','Semaine'],['month','Mois'],['year','Année']]) {
+    for (const [key, label] of [['week',t('calendrier.week')],['month',t('calendrier.month')],['year',t('calendrier.year')]]) {
       const btn = el('button', {
         className: `ca-radio-btn${key === currentView ? ' active' : ''}`,
         onClick: () => {
@@ -1281,13 +1277,13 @@ export async function renderCalendrier(container) {
     const planBtn = el('button', {
       className: 'ca-btn accent',
       onClick: () => _openCreateModal(_todayKey(), rerender),
-    }, '+ Planifier');
+    }, t('calendrier.plan'));
 
     const fitWorkoutBtn = el('button', {
       className: 'ca-btn',
       style: { borderColor: 'var(--accent)', color: 'var(--accent)' },
       onClick: () => _openTextToFitModal(),
-    }, 'Workout Garmin');
+    }, t('calendrier.garminWorkout'));
 
     const controlBar = el('div', { className: 'cg-control-bar' },
       el('div', { className: 'cg-control-left' }, todayBtn, prevBtn, monthLabel, nextBtn),
@@ -1299,9 +1295,9 @@ export async function renderCalendrier(container) {
 
     // ── Footer ───────────────────────────────────────────────────────────
     const footerStats = el('span', { className: 'cg-footer-stats' });
-    const footerLabel = el('span', { className: 'cg-footer-label' }, 'Totaux');
+    const footerLabel = el('span', { className: 'cg-footer-label' }, t('calendrier.totals'));
     const footerSelect = el('select', { className: 'ca-select', style: { minWidth: '160px' } });
-    footerSelect.appendChild(el('option', { value: 'all' }, 'Toutes activités'));
+    footerSelect.appendChild(el('option', { value: 'all' }, t('calendrier.allActivities')));
     for (const t of types) footerSelect.appendChild(el('option', { value: t }, t));
     footerSelect.addEventListener('change', () => { typeFilter = footerSelect.value; updateFooter(); });
 
@@ -1310,25 +1306,25 @@ export async function renderCalendrier(container) {
       if (currentView === 'month') {
         start = new Date(viewYear, viewMonth, 1);
         end   = new Date(viewYear, viewMonth + 1, 0);
-        label = 'Totaux mensuels';
+        label = t('calendrier.monthlyTotals');
       } else if (currentView === 'week') {
         start = new Date(viewMonday);
         end   = new Date(viewMonday); end.setDate(end.getDate() + 6);
-        label = 'Totaux semaine';
+        label = t('calendrier.weekTotalsLabel');
       } else {
         start = new Date(viewYear, 0, 1);
         end   = new Date(viewYear, 11, 31);
-        label = 'Totaux annuels';
+        label = t('calendrier.yearlyTotals');
       }
       footerLabel.textContent = label;
-      const t = _periodTotals(activities, start, end, typeFilter);
+      const pt = _periodTotals(activities, start, end, typeFilter);
       footerStats.innerHTML = '';
-      footerStats.appendChild(el('span', {}, 'Activités: '));
-      footerStats.appendChild(el('strong', {}, `${t.count}`));
-      footerStats.appendChild(el('span', { style: { margin: '0 12px' } }, 'Distance: '));
-      footerStats.appendChild(el('strong', {}, `${fmt(t.dist, 2)} km`));
-      footerStats.appendChild(el('span', { style: { margin: '0 12px' } }, 'Durée: '));
-      footerStats.appendChild(el('strong', {}, _fmtDuration(t.dur)));
+      footerStats.appendChild(el('span', {}, t('calendrier.footerActs')));
+      footerStats.appendChild(el('strong', {}, `${pt.count}`));
+      footerStats.appendChild(el('span', { style: { margin: '0 12px' } }, t('calendrier.footerDist')));
+      footerStats.appendChild(el('strong', {}, `${fmt(pt.dist, 2)} km`));
+      footerStats.appendChild(el('span', { style: { margin: '0 12px' } }, t('calendrier.footerDur')));
+      footerStats.appendChild(el('strong', {}, _fmtDuration(pt.dur)));
     }
 
     const footer = el('div', { className: 'cg-footer' },

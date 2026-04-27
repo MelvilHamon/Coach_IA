@@ -5,6 +5,7 @@
 import { api } from './api.js';
 import { fmtDateShort } from './components.js';
 import { getCurrentSport, setCurrentSport } from './state.js';
+import { t, getLang, setLang, onLangChange } from './i18n.js';
 import { renderOverview } from './sections/overview.js';
 import { renderHistory } from './sections/history.js';
 import { renderProfil } from './sections/profil.js';
@@ -148,7 +149,7 @@ function navigate(section) {
   try {
     SECTIONS[section](container);
   } catch (err) {
-    container.innerHTML = `<div class="ca-error">Erreur de rendu : ${err.message}</div>`;
+    container.innerHTML = `<div class="ca-error">${t('common.errorPrefix', { msg: err.message })}</div>`;
   }
 }
 
@@ -156,12 +157,12 @@ function navigate(section) {
 
 function _fmtAgo(minutes) {
   if (minutes == null) return '—';
-  if (minutes < 1)   return 'à l\'instant';
-  if (minutes < 60)  return `il y a ${Math.round(minutes)} min`;
+  if (minutes < 1)   return t('common.atInstant');
+  if (minutes < 60)  return t('common.minAgo', { n: Math.round(minutes) });
   const h = Math.floor(minutes / 60);
-  if (h < 24) return `il y a ${h}h`;
+  if (h < 24) return t('common.hoursAgo', { n: h });
   const d = Math.floor(h / 24);
-  return `il y a ${d}j`;
+  return t('common.daysAgo', { n: d });
 }
 
 function _updateSyncUI(syncData) {
@@ -170,7 +171,7 @@ function _updateSyncUI(syncData) {
   if (!el || !btn) return;
 
   if (syncData.sync_in_progress) {
-    el.textContent = 'Synchronisation…';
+    el.textContent = t('header.syncing');
     el.classList.add('syncing');
     btn.classList.add('spinning');
   } else {
@@ -178,9 +179,9 @@ function _updateSyncUI(syncData) {
     btn.classList.remove('spinning');
 
     if (syncData.last_error) {
-      el.textContent = `Dernière tentative : ${_fmtAgo(syncData.last_sync_ago_minutes)}`;
+      el.textContent = t('header.lastAttempt', { ago: _fmtAgo(syncData.last_sync_ago_minutes) });
     } else {
-      el.textContent = `Mis à jour ${_fmtAgo(syncData.last_sync_ago_minutes)}`;
+      el.textContent = t('header.lastUpdate', { ago: _fmtAgo(syncData.last_sync_ago_minutes) });
     }
   }
 }
@@ -225,7 +226,7 @@ function _showStravaBanner(message) {
   btnWrap.style.cssText = 'display:flex;gap:10px;align-items:center';
 
   const reconnect = document.createElement('a');
-  reconnect.textContent = 'Reconnecter Strava';
+  reconnect.textContent = t('header.reconnectStrava');
   reconnect.href = '#settings';
   reconnect.style.cssText =
     'background:#fff;color:#e74c3c;padding:6px 14px;border-radius:4px;' +
@@ -272,14 +273,14 @@ async function triggerSync() {
   const btn = document.getElementById('sync-btn');
   const el = document.getElementById('header-sync');
   if (btn) btn.classList.add('spinning');
-  if (el) { el.textContent = 'Synchronisation…'; el.classList.add('syncing'); }
+  if (el) { el.textContent = t('header.syncing'); el.classList.add('syncing'); }
 
   try {
     await api.syncStart();
     _startSyncPolling();
   } catch {
     if (btn) btn.classList.remove('spinning');
-    if (el) { el.textContent = 'Échec sync'; el.classList.remove('syncing'); }
+    if (el) { el.textContent = t('header.syncFailed'); el.classList.remove('syncing'); }
   }
 }
 
@@ -294,7 +295,7 @@ async function initHeader() {
     if (status.last_activity) {
       dateEl.textContent = fmtDateShort(status.last_activity);
     }
-    countEl.textContent = `${status.n_activities} activités`;
+    countEl.textContent = `${status.n_activities} ${t('common.activities')}`;
   } catch {
     // Header non-critical
   }
@@ -352,8 +353,41 @@ async function logout() {
 
 // ── Init ────────────────────────────────────────────────────────────────────
 
+function applyI18nToDom() {
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.getAttribute('data-i18n');
+    if (key) el.textContent = t(key);
+  });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+    const key = el.getAttribute('data-i18n-placeholder');
+    if (key) el.setAttribute('placeholder', t(key));
+  });
+  document.querySelectorAll('[data-i18n-title]').forEach(el => {
+    const key = el.getAttribute('data-i18n-title');
+    if (key) el.setAttribute('title', t(key));
+  });
+  // Update active language button
+  document.querySelectorAll('.ca-lang-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.lang === getLang());
+  });
+}
+
+function initLangSwitch() {
+  document.querySelectorAll('.ca-lang-btn').forEach(b => {
+    b.addEventListener('click', () => setLang(b.dataset.lang));
+  });
+  onLangChange(() => {
+    applyI18nToDom();
+    initHeader();
+    if (_currentSection) navigate(_currentSection);
+  });
+  applyI18nToDom();
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   initAuthForms();
+  applyI18nToDom();
+  initLangSwitch();
 
   // Listen for 401 forced logouts
   window.addEventListener('ca:logout', () => {

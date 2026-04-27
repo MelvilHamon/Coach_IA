@@ -4,6 +4,7 @@
 
 import { api } from '../api.js';
 import { el, sectionTitle, loading } from '../components.js';
+import { t } from '../i18n.js';
 
 export async function renderSettings(container) {
   container.innerHTML = '';
@@ -23,17 +24,17 @@ export async function renderSettings(container) {
   const hrSource = userInfo.hr_max_source || 'default';
 
   container.innerHTML = '';
-  container.appendChild(sectionTitle('Paramètres'));
+  container.appendChild(sectionTitle(t('settings.title')));
 
   // ── User info ──
   const userSection = el('div', { className: 'ca-section' },
     el('div', { className: 'ca-detail-rows' },
       el('div', { className: 'ca-detail-row' },
-        el('span', { className: 'ca-detail-label' }, 'Utilisateur'),
+        el('span', { className: 'ca-detail-label' }, t('settings.user')),
         el('span', { className: 'ca-detail-value' }, userInfo.user.display_name || userInfo.user.email),
       ),
       el('div', { className: 'ca-detail-row' },
-        el('span', { className: 'ca-detail-label' }, 'Email'),
+        el('span', { className: 'ca-detail-label' }, t('settings.email')),
         el('span', { className: 'ca-detail-value' }, userInfo.user.email),
       ),
     ),
@@ -42,8 +43,8 @@ export async function renderSettings(container) {
 
   // ── Profil physiologique ──
   const genderSelect = el('select', { className: 'ca-input', style: { width: '160px' } },
-    el('option', { value: 'male' }, 'Homme'),
-    el('option', { value: 'female' }, 'Femme'),
+    el('option', { value: 'male' }, t('settings.male')),
+    el('option', { value: 'female' }, t('settings.female')),
   );
   genderSelect.value = profile.gender === 'female' ? 'female' : 'male';
 
@@ -56,31 +57,30 @@ export async function renderSettings(container) {
     return inp;
   };
 
-  const hrMax = hrInput('FC max', 'hr_max');
-  const hrRest = hrInput('FC repos', 'hr_rest');
-  const hrThreshold = hrInput('FC seuil', 'hr_threshold');
+  const hrMax = hrInput(t('common.hrMax'), 'hr_max');
+  const hrRest = hrInput(t('common.hrRest'), 'hr_rest');
+  const hrThreshold = hrInput(t('common.hrThreshold'), 'hr_threshold');
 
   // Affichage de la FC auto-détectée depuis les streams (informatif).
   const autoBadge = (value, n) => {
     if (!value) return null;
-    const label = `Auto : ${value} bpm`;
-    const sub = n ? ` (${n} séances)` : '';
+    const label = t('settings.autoBpm', { n: value });
+    const sub = n ? ' ' + t('settings.autoFrom', { n }) : '';
     return el('span', {
       style: {
         fontSize: '11px', color: 'var(--ink-light)',
         marginLeft: '4px', whiteSpace: 'nowrap',
       },
-      title: 'Valeur estimée à partir des streams de tes activités. '
-           + 'La valeur que tu renseignes ci-contre est prioritaire.',
+      title: t('settings.autoTooltip'),
     }, label + sub);
   };
   const hrMaxAutoBadge = autoBadge(hrAuto.hr_max_observed, hrAuto.computed_from_n_activities);
 
   // Indicateur de la source active (user / estimated / default).
   const sourceLabel = {
-    user:      'Saisie manuelle',
-    estimated: 'Auto-détectée',
-    default:   'Valeur par défaut',
+    user:      t('settings.sourceUser'),
+    estimated: t('settings.sourceEstimated'),
+    default:   t('settings.sourceDefault'),
   }[hrSource] || hrSource;
   const sourceBadge = el('span', {
     style: {
@@ -93,7 +93,7 @@ export async function renderSettings(container) {
              hrSource === 'estimated' ? 'var(--info, #2f6eb5)' :
              'var(--ink-mid)',
     },
-  }, `FC max active : ${sourceLabel}`);
+  }, t('settings.activeHrMax', { label: sourceLabel }));
 
   const weightInput = el('input', {
     type: 'number', className: 'ca-input', placeholder: 'Poids (kg)',
@@ -127,20 +127,19 @@ export async function renderSettings(container) {
       try {
         const s = await api.profileRecomputeStatus();
         if (s.status === 'done') {
-          profileMsg.textContent = 'Profil enregistré. Métriques recalculées.';
+          profileMsg.textContent = t('settings.profileSaved');
           profileMsg.style.color = 'var(--success)';
           return;
         }
         if (s.status === 'error') {
-          profileMsg.textContent = 'Profil enregistré mais le recalcul a échoué : '
-            + (s.error || 'erreur inconnue');
+          profileMsg.textContent = t('settings.recomputeFailed', { err: s.error || t('settings.unknownError') });
           profileMsg.style.color = 'var(--danger)';
           return;
         }
       } catch { /* transient — on réessaie */ }
     }
     // Timeout : on ne force pas d'erreur, juste on arrête de suivre.
-    profileMsg.textContent = 'Profil enregistré. Le recalcul continue en arrière-plan.';
+    profileMsg.textContent = t('settings.profileBg');
     profileMsg.style.color = 'var(--ink-mid)';
   };
 
@@ -160,18 +159,18 @@ export async function renderSettings(container) {
         hr_z5_max: z5.value ? parseInt(z5.value) : null,
         weight_kg: weightInput.value ? parseFloat(weightInput.value) : null,
       };
-      profileBtn.textContent = 'Enregistrement…';
+      profileBtn.textContent = t('common.saving');
       profileBtn.disabled = true;
       try {
         const res = await api.saveProfile(data);
         if (res.ok) {
-          profileMsg.textContent = 'Profil enregistré. Recalcul de vos métriques en cours en fonction de votre profil…';
+          profileMsg.textContent = t('settings.profileSaving');
           profileMsg.style.color = 'var(--info, #2f6eb5)';
           profileMsg.style.display = '';
           // Polling en arrière-plan ; ne bloque pas l'utilisateur.
           pollRecomputeStatus();
         } else {
-          profileMsg.textContent = res.error || 'Erreur';
+          profileMsg.textContent = res.error || t('common.error');
           profileMsg.style.color = 'var(--danger)';
           profileMsg.style.display = '';
         }
@@ -180,30 +179,30 @@ export async function renderSettings(container) {
         profileMsg.style.color = 'var(--danger)';
         profileMsg.style.display = '';
       } finally {
-        profileBtn.textContent = 'Enregistrer';
+        profileBtn.textContent = t('common.save');
         profileBtn.disabled = false;
       }
     },
-  }, 'Enregistrer');
+  }, t('common.save'));
 
   const profileSection = el('div', { className: 'ca-section' },
-    sectionTitle('Profil physiologique'),
+    sectionTitle(t('settings.physioProfile')),
     el('div', { className: 'ca-settings-explain' },
-      'Ces informations permettent de calculer tes zones FC, TRIMP et hrTSS avec précision. ',
-      'La valeur que tu saisis est prioritaire sur l’estimation automatique depuis tes streams.',
+      t('settings.physioExplain1'),
+      t('settings.physioExplain2'),
     ),
     el('div', { style: { display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center', marginTop: '12px' } },
-      el('label', { style: { fontSize: '12px' } }, 'Genre : '), genderSelect,
-      el('label', { style: { fontSize: '12px' } }, 'FC max : '), hrMax,
+      el('label', { style: { fontSize: '12px' } }, t('settings.gender') + ' : '), genderSelect,
+      el('label', { style: { fontSize: '12px' } }, t('common.hrMax') + ' : '), hrMax,
       hrMaxAutoBadge,
-      el('label', { style: { fontSize: '12px', marginLeft: '8px' } }, 'FC repos : '), hrRest,
-      el('label', { style: { fontSize: '12px', marginLeft: '8px' } }, 'FC seuil : '), hrThreshold,
-      el('label', { style: { fontSize: '12px', marginLeft: '8px' } }, 'Poids : '), weightInput,
+      el('label', { style: { fontSize: '12px', marginLeft: '8px' } }, t('common.hrRest') + ' : '), hrRest,
+      el('label', { style: { fontSize: '12px', marginLeft: '8px' } }, t('common.hrThreshold') + ' : '), hrThreshold,
+      el('label', { style: { fontSize: '12px', marginLeft: '8px' } }, t('settings.weight') + ' : '), weightInput,
       sourceBadge,
     ),
     el('div', { style: { marginTop: '12px' } },
       el('div', { className: 'ca-settings-explain', style: { marginBottom: '8px' } },
-        'Zones BPM personnalisées (limite haute de chaque zone) :',
+        t('settings.customZones'),
       ),
       el('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
         el('label', { style: { fontSize: '11px' } }, 'Z1'), z1,
@@ -217,11 +216,10 @@ export async function renderSettings(container) {
       profileBtn,
       el('button', {
         className: 'ca-btn',
-        title: 'Relance l\'analyse complète sans modifier le profil. '
-             + 'Utile après un déploiement avec nouvelle logique de classification.',
+        title: t('settings.recomputeTooltip'),
         onClick: async () => {
           profileMsg.style.display = 'none';
-          profileMsg.textContent = 'Recalcul de vos métriques en cours en fonction de votre profil…';
+          profileMsg.textContent = t('settings.profileSaving');
           profileMsg.style.color = 'var(--info, #2f6eb5)';
           profileMsg.style.display = '';
           try {
@@ -232,7 +230,7 @@ export async function renderSettings(container) {
             profileMsg.style.color = 'var(--danger)';
           }
         },
-      }, 'Recalculer mes métriques'),
+      }, t('settings.recomputeMetrics')),
     ),
     profileMsg,
   );
@@ -250,23 +248,23 @@ export async function renderSettings(container) {
   // Check URL params for OAuth callback result
   const urlParams = new URLSearchParams(window.location.hash.split('?')[1] || '');
   if (urlParams.get('strava') === 'connected') {
-    stravaMsg.textContent = 'Compte Strava connecté avec succès !';
+    stravaMsg.textContent = t('settings.stravaConnectedSuccess');
     stravaMsg.style.color = 'var(--success)';
     stravaMsg.style.display = '';
   } else if (urlParams.get('error') === 'strava_denied') {
-    stravaMsg.textContent = 'Autorisation Strava refusée.';
+    stravaMsg.textContent = t('settings.stravaDenied');
     stravaMsg.style.color = 'var(--danger)';
     stravaMsg.style.display = '';
   } else if (urlParams.get('error') === 'strava_exchange_failed') {
-    stravaMsg.textContent = 'Erreur lors de la connexion Strava. Réessayez.';
+    stravaMsg.textContent = t('settings.stravaExchangeFailed');
     stravaMsg.style.color = 'var(--danger)';
     stravaMsg.style.display = '';
   } else if (urlParams.get('error') === 'not_authenticated') {
-    stravaMsg.textContent = 'Session expirée. Reconnecte-toi et réessaye.';
+    stravaMsg.textContent = t('settings.sessionExpired');
     stravaMsg.style.color = 'var(--danger)';
     stravaMsg.style.display = '';
   } else if (urlParams.get('error') === 'strava_not_configured') {
-    stravaMsg.textContent = 'Strava non configuré côté serveur (STRAVA_CLIENT_ID manquant).';
+    stravaMsg.textContent = t('settings.stravaNotConfigured');
     stravaMsg.style.color = 'var(--danger)';
     stravaMsg.style.display = '';
   }
@@ -277,8 +275,8 @@ export async function renderSettings(container) {
     const disconnectBtn = el('button', {
       className: 'ca-btn danger',
       onClick: async () => {
-        if (!confirm('Déconnecter ton compte Strava ?')) return;
-        disconnectBtn.textContent = 'Déconnexion…';
+        if (!confirm(t('settings.stravaDisconnectConfirm'))) return;
+        disconnectBtn.textContent = t('settings.stravaDisconnecting');
         disconnectBtn.disabled = true;
         try {
           await api.stravaDisconnect();
@@ -287,16 +285,16 @@ export async function renderSettings(container) {
           stravaMsg.textContent = e.message;
           stravaMsg.style.color = 'var(--danger)';
           stravaMsg.style.display = '';
-          disconnectBtn.textContent = 'Déconnecter';
+          disconnectBtn.textContent = t('settings.stravaDisconnect');
           disconnectBtn.disabled = false;
         }
       },
-    }, 'Déconnecter');
+    }, t('settings.stravaDisconnect'));
 
     stravaBody = el('div', {},
       el('div', { style: { marginBottom: '12px' } },
-        el('span', { style: { color: 'var(--success)', fontWeight: 500 } }, 'Connecté'),
-        athleteId ? el('span', { style: { marginLeft: '8px', opacity: 0.7, fontSize: '12px' } }, `(athlete #${athleteId})`) : '',
+        el('span', { style: { color: 'var(--success)', fontWeight: 500 } }, t('settings.stravaConnected')),
+        athleteId ? el('span', { style: { marginLeft: '8px', opacity: 0.7, fontSize: '12px' } }, t('settings.athleteNum', { id: athleteId })) : '',
       ),
       disconnectBtn,
     );
@@ -312,10 +310,10 @@ export async function renderSettings(container) {
 
     stravaBody = el('div', {},
       el('div', { style: { marginBottom: '12px' } },
-        el('span', { style: { color: 'var(--danger)' } }, 'Non connecté'),
+        el('span', { style: { color: 'var(--danger)' } }, t('settings.stravaNotConnected')),
       ),
       el('div', { className: 'ca-settings-explain' },
-        'Connecte ton compte Strava pour synchroniser automatiquement tes activités.',
+        t('settings.stravaConnect'),
       ),
       el('div', { style: { marginTop: '12px' } }, connectBtn),
     );
@@ -332,14 +330,14 @@ export async function renderSettings(container) {
 
 // ── Gear section ───────────────────────────────────────────────────────────
 
-const GEAR_TYPES = [
-  { value: 'shoes', label: 'Chaussures' },
-  { value: 'watch', label: 'Montre' },
+const GEAR_TYPES = () => [
+  { value: 'shoes', label: t('settings.shoes') },
+  { value: 'watch', label: t('settings.watch') },
 ];
 
 async function renderGearSection(container) {
   container.innerHTML = '';
-  container.appendChild(el('div', { className: 'ca-loading' }, 'Chargement matériel…'));
+  container.appendChild(el('div', { className: 'ca-loading' }, t('settings.loadingGear')));
 
   let gearList = [];
   try {
@@ -348,17 +346,17 @@ async function renderGearSection(container) {
   } catch { /* empty */ }
 
   container.innerHTML = '';
-  container.appendChild(sectionTitle('Matériel'));
+  container.appendChild(sectionTitle(t('settings.gear')));
   container.appendChild(el('div', { className: 'ca-settings-explain' },
-    'Enregistre tes chaussures et montres pour suivre les kilomètres cumulés.',
+    t('settings.gearExplain'),
   ));
 
   // ── Add form ──
-  const nameInput = el('input', { type: 'text', className: 'ca-input', placeholder: 'Nom (ex: Nike Vaporfly)', style: { width: '200px' } });
-  const brandInput = el('input', { type: 'text', className: 'ca-input', placeholder: 'Marque', style: { width: '140px' } });
+  const nameInput = el('input', { type: 'text', className: 'ca-input', placeholder: t('settings.gearNamePlaceholder'), style: { width: '200px' } });
+  const brandInput = el('input', { type: 'text', className: 'ca-input', placeholder: t('settings.brand'), style: { width: '140px' } });
   const typeSelect = el('select', { className: 'ca-input', style: { width: '130px' } });
-  for (const t of GEAR_TYPES) {
-    typeSelect.appendChild(el('option', { value: t.value }, t.label));
+  for (const gt of GEAR_TYPES()) {
+    typeSelect.appendChild(el('option', { value: gt.value }, gt.label));
   }
   const dateInput = el('input', { type: 'date', className: 'ca-input', style: { width: '150px' } });
   const addMsg = el('div', { className: 'ca-auth-error', style: { display: 'none', marginTop: '8px' } });
@@ -367,13 +365,13 @@ async function renderGearSection(container) {
     className: 'ca-btn accent',
     onClick: async () => {
       if (!nameInput.value.trim()) {
-        addMsg.textContent = 'Nom requis.';
+        addMsg.textContent = t('settings.nameRequired');
         addMsg.style.color = 'var(--danger)';
         addMsg.style.display = '';
         return;
       }
       addBtn.disabled = true;
-      addBtn.textContent = 'Ajout…';
+      addBtn.textContent = t('settings.addingGear');
       addMsg.style.display = 'none';
       try {
         await api.createGear({
@@ -393,14 +391,14 @@ async function renderGearSection(container) {
         addMsg.style.display = '';
       } finally {
         addBtn.disabled = false;
-        addBtn.textContent = 'Ajouter';
+        addBtn.textContent = t('common.add');
       }
     },
-  }, 'Ajouter');
+  }, t('common.add'));
 
   const addForm = el('div', { style: { marginTop: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
     typeSelect, nameInput, brandInput,
-    el('label', { style: { fontSize: '11px' } }, 'Acquis le'), dateInput,
+    el('label', { style: { fontSize: '11px' } }, t('settings.acquiredOn')), dateInput,
     addBtn,
   );
   container.appendChild(addForm);
@@ -408,18 +406,18 @@ async function renderGearSection(container) {
 
   // ── Gear list ──
   if (!gearList.length) {
-    container.appendChild(el('div', { className: 'ca-empty', style: { marginTop: '16px' } }, 'Aucun matériel enregistré.'));
+    container.appendChild(el('div', { className: 'ca-empty', style: { marginTop: '16px' } }, t('settings.noGear')));
     return;
   }
 
   const table = el('div', { style: { marginTop: '16px' } });
 
   for (const g of gearList) {
-    const typeLabel = GEAR_TYPES.find(t => t.value === g.type)?.label || g.type;
+    const typeLabel = GEAR_TYPES().find(gt => gt.value === g.type)?.label || g.type;
     const dateStr = g.acquired_date || '—';
     const km = g.total_km != null ? `${g.total_km} km` : '0 km';
     const retiredBadge = g.retired
-      ? el('span', { style: { fontSize: '10px', color: 'var(--ink-light)', marginLeft: '6px' } }, '(retiré)')
+      ? el('span', { style: { fontSize: '10px', color: 'var(--ink-light)', marginLeft: '6px' } }, t('settings.retired'))
       : null;
 
     const retireBtn = el('button', {
@@ -432,17 +430,17 @@ async function renderGearSection(container) {
         });
         renderGearSection(container);
       },
-    }, g.retired ? 'Réactiver' : 'Retirer');
+    }, g.retired ? t('settings.reactivate') : t('settings.retire'));
 
     const deleteBtn = el('button', {
       className: 'ca-btn',
       style: { fontSize: '11px', padding: '2px 8px', color: 'var(--danger)' },
       onClick: async () => {
-        if (!confirm(`Supprimer "${g.name}" ?`)) return;
+        if (!confirm(t('settings.confirmDelete', { name: g.name }))) return;
         await api.deleteGear(g.id);
         renderGearSection(container);
       },
-    }, 'Supprimer');
+    }, t('common.delete'));
 
     const row = el('div', {
       className: 'ca-detail-row',
@@ -455,7 +453,7 @@ async function renderGearSection(container) {
           retiredBadge,
         ),
         el('div', { style: { fontSize: '12px', color: 'var(--ink-mid)' } },
-          [g.brand, `depuis ${dateStr}`, km].filter(Boolean).join(' · '),
+          [g.brand, t('settings.since', { date: dateStr }), km].filter(Boolean).join(' · '),
         ),
       ),
       el('div', { style: { display: 'flex', gap: '4px', flexShrink: '0' } }, retireBtn, deleteBtn),

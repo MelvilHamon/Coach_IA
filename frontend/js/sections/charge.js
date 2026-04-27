@@ -5,10 +5,11 @@
 import { api } from '../api.js';
 import {
   el, sectionTitle, metricCard, flagPill, fmt, fmtDate, loading, empty,
-  acwrStatus, riskStatus, badge, collapsible,
+  acwrStatus, riskStatus, badge, collapsible, methodBody,
 } from '../components.js';
 import { plotAcwr, plotPolarizedBar } from '../charts.js';
 import { getCurrentSport } from '../state.js';
+import { t, getLang } from '../i18n.js';
 
 
 // ── Week helpers ────────────────────────────────────────────────────────────
@@ -32,7 +33,8 @@ function _sundayOf(monday) {
 function _fmtWeekRange(monday) {
   const sun = _sundayOf(monday);
   const opts = { day: '2-digit', month: 'short' };
-  return `${monday.toLocaleDateString('fr-FR', opts)} → ${sun.toLocaleDateString('fr-FR', opts)}`;
+  const loc = getLang() === 'en' ? 'en-US' : 'fr-FR';
+  return `${monday.toLocaleDateString(loc, opts)} → ${sun.toLocaleDateString(loc, opts)}`;
 }
 
 
@@ -98,23 +100,23 @@ function _buildPolarizedBlock(activities, weekMonday) {
 
   if (grandTotal === 0) {
     return el('div', { className: 'ca-empty' },
-      'Aucune activité avec données FC cette semaine.',
+      t('charge.noFcWeek'),
     );
   }
 
   // ── KPI cards ──
   const kpiRow = el('div', { className: 'ca-metrics-row', style: { marginBottom: '24px' } },
-    metricCard('Endurance fond.', fmt(pctEF, 0), '%', {
+    metricCard(t('charge.enduranceFond'), fmt(pctEF, 0), '%', {
       status: _polarizedStatus(pctEF),
-      explain: `Cible : 80%. Z1+Z2+Z3 = ${fmt(grandEF, 0)} min sur ${fmt(grandTotal, 0)} min totales.`,
+      explain: t('charge.target80', { ef: fmt(grandEF, 0), tot: fmt(grandTotal, 0) }),
     }),
-    metricCard('Seuil et +', fmt(pctSeuil, 0), '%', {
+    metricCard(t('charge.threshold'), fmt(pctSeuil, 0), '%', {
       status: _polarizedStatus(pctEF),
-      explain: `Cible : 20%. Z4+Z5 = ${fmt(grandSeuil, 0)} min sur ${fmt(grandTotal, 0)} min totales.`,
+      explain: t('charge.target20', { seuil: fmt(grandSeuil, 0), tot: fmt(grandTotal, 0) }),
     }),
-    metricCard('Activités', String(actsWithZones), '', {
+    metricCard(t('common.activities').charAt(0).toUpperCase() + t('common.activities').slice(1), String(actsWithZones), '', {
       status: 'neutral',
-      explain: `${weekActs.length} activités cette semaine, dont ${actsWithZones} avec données FC.`,
+      explain: t('charge.activitiesExplain', { week: weekActs.length, fc: actsWithZones }),
     }),
   );
 
@@ -128,11 +130,11 @@ function _buildPolarizedBlock(activities, weekMonday) {
   },
     el('span', {},
       el('span', { style: { display: 'inline-block', width: '10px', height: '10px', background: 'var(--success)', marginRight: '6px', borderRadius: '1px' } }),
-      'Endurance fondamentale = Z1+Z2+Z3 (FC < 80% max)',
+      t('charge.legendEf'),
     ),
     el('span', {},
       el('span', { style: { display: 'inline-block', width: '10px', height: '10px', background: 'var(--danger)', marginRight: '6px', borderRadius: '1px' } }),
-      'Seuil et + = Z4+Z5 (FC \u2265 80% max)',
+      t('charge.legendSeuil'),
     ),
   );
 
@@ -142,14 +144,14 @@ function _buildPolarizedBlock(activities, weekMonday) {
 
   const thead = el('thead', {},
     el('tr', {},
-      el('th', {}, 'Activité'),
-      el('th', {}, 'Date'),
-      el('th', {}, 'Type'),
-      el('th', { style: { textAlign: 'right' } }, 'Total'),
-      el('th', { style: { textAlign: 'right' } }, 'EF'),
-      el('th', { style: { textAlign: 'right' } }, 'Seuil+'),
-      el('th', { style: { textAlign: 'right' } }, '% EF'),
-      el('th', { style: { textAlign: 'right' } }, '% Seuil'),
+      el('th', {}, t('common.activity')),
+      el('th', {}, t('common.date')),
+      el('th', {}, t('common.type')),
+      el('th', { style: { textAlign: 'right' } }, t('common.total')),
+      el('th', { style: { textAlign: 'right' } }, t('charge.colEf')),
+      el('th', { style: { textAlign: 'right' } }, t('charge.colSeuil')),
+      el('th', { style: { textAlign: 'right' } }, t('charge.colPctEf')),
+      el('th', { style: { textAlign: 'right' } }, t('charge.colPctSeuil')),
     ),
   );
 
@@ -169,7 +171,7 @@ function _buildPolarizedBlock(activities, weekMonday) {
 
   // Total row
   tbody.appendChild(el('tr', { style: { fontWeight: '600', borderTop: '2px solid var(--ink)' } },
-    el('td', { style: { textTransform: 'uppercase', letterSpacing: '0.1em', fontSize: '9px' } }, 'Total semaine'),
+    el('td', { style: { textTransform: 'uppercase', letterSpacing: '0.1em', fontSize: '9px' } }, t('charge.weekTotal')),
     el('td', {}),
     el('td', {}),
     el('td', { style: { textAlign: 'right' } }, `${fmtMin(grandTotal)} min`),
@@ -218,7 +220,7 @@ export async function renderCharge(container) {
     container.innerHTML = '';
 
     if (!acwrRes.points?.length) {
-      container.appendChild(empty('Pas de données ACWR.'));
+      container.appendChild(empty(t('charge.noAcwr')));
       return;
     }
 
@@ -234,48 +236,36 @@ export async function renderCharge(container) {
 
     // ── KPI row ──
     const cards = el('div', { className: 'ca-metrics-row ca-section' },
-      metricCard('ACWR actuel', fmt(last?.acwr_km, 2), '', {
+      metricCard(t('charge.acwrCurrent'), fmt(last?.acwr_km, 2), '', {
         status: acwrStatus(last?.acwr_km),
-        explain: 'Ratio charge aiguë / chronique. Entre 0.8 et 1.3 = zone optimale. Au-dessus de 1.5 = surcharge.',
+        explain: t('charge.acwrCurrentExplain'),
       }),
-      metricCard('Score de risque', fmt(last?.injury_risk_score, 0), '/100', {
+      metricCard(t('charge.riskScore'), fmt(last?.injury_risk_score, 0), '/100', {
         status: riskStatus(last?.injury_risk_label),
-        explain: 'Score composite 0-100 basé sur 4 facteurs : ACWR, monotonie, pic de charge, jours consécutifs.',
+        explain: t('charge.riskExplain'),
       }),
       metricCard('Monotony', fmt(monoV, 2), '', {
         status: monoStatus,
-        explain: 'Régularité de la charge 7j (mean/std). > 2.0 = entraînement trop uniforme.',
+        explain: t('charge.monotonyExplain'),
       }),
       metricCard('Strain', fmt(last?.strain, 0), '', {
         status: 'neutral',
-        explain: 'Charge globale = Monotony × somme TRIMP 7j. Combine uniformité et volume.',
+        explain: t('charge.strainExplain'),
       }),
     );
     container.appendChild(cards);
 
     // ── ACWR chart ──
     const chartSection = el('div', { className: 'ca-section' },
-      sectionTitle('ACWR — 90 derniers jours'),
+      sectionTitle(t('charge.acwrTitle')),
       el('div', { className: 'ca-metric-explain', style: { marginBottom: '16px' } },
-        'L\'ACWR (Acute:Chronic Workload Ratio) compare votre charge des 7 derniers jours à celle des 28 derniers jours. '
-        + 'La zone verte (0.8–1.3) est optimale pour progresser en limitant le risque. '
-        + 'Au-dessus de 1.5, le risque de blessure augmente significativement.',
+        t('charge.acwrChartExplain'),
       ),
       el('div', { className: 'ca-chart-card' },
         el('div', { id: 'chart-acwr', className: 'ca-chart-container' }),
       ),
     );
-    chartSection.appendChild(collapsible('Méthode de calcul — ACWR', () =>
-      el('div', {},
-        el('p', {}, 'L\'ACWR est calculé via EWMA (Exponential Weighted Moving Average) selon Hulin et al. (2016) et Williams et al. (2017).'),
-        el('p', { style: { fontStyle: 'italic' } }, 'Charge aiguë : EWMA 7j, λ = 2/(7+1) = 0.250'),
-        el('p', { style: { fontStyle: 'italic' } }, 'Charge chronique : EWMA 28j, λ = 2/(28+1) ≈ 0.069'),
-        el('p', { style: { fontStyle: 'italic' } }, 'ACWR = charge aiguë / charge chronique'),
-        el('p', {}, 'La série est construite sur un calendrier quotidien (jours sans activité = 0) '
-          + 'pour que les jours de repos décroissent correctement la charge.'),
-        el('p', {}, 'Référence : Hulin BT et al. (2016). The acute:chronic workload ratio predicts injury. Br J Sports Med 50(4):231-236.'),
-      ),
-    ));
+    chartSection.appendChild(collapsible(t('charge.methodAcwr'), () => methodBody('charge.methodAcwrBody')));
 
     container.appendChild(chartSection);
     plotAcwr(document.getElementById('chart-acwr'), acwrRes);
@@ -283,9 +273,9 @@ export async function renderCharge(container) {
     // ── Flags ──
     if (last) {
       const flagSection = el('div', { className: 'ca-section' },
-        sectionTitle('Alertes actives'),
+        sectionTitle(t('charge.flagsTitle')),
         el('div', { className: 'ca-metric-explain', style: { marginBottom: '12px' } },
-          'Facteurs de risque détectés sur la dernière activité.',
+          t('charge.flagsExplain'),
         ),
         el('div', { className: 'ca-flags' },
           flagPill('acwr',        last.flags?.acwr),
@@ -294,16 +284,7 @@ export async function renderCharge(container) {
           flagPill('consecutive', last.flags?.consecutive),
         ),
       );
-      flagSection.appendChild(collapsible('Méthode — Score de risque blessure', () =>
-        el('div', {},
-          el('p', {}, 'Score composite 0-100 basé sur 4 facteurs indépendants :'),
-          el('p', {}, 'ACWR > 1.5 → +40 pts, ACWR 1.3-1.5 → +20 pts'),
-          el('p', {}, 'Variation charge > 50% → +35 pts, > 30% → +20 pts'),
-          el('p', {}, 'Monotonie (Foster 1998) > 2.0 → +20 pts'),
-          el('p', {}, '≥ 6 jours consécutifs → +25 pts, ≥ 4 jours → +15 pts'),
-          el('p', {}, 'Labels : faible (0-24), modéré (25-49), élevé (50-74), critique (75-100).'),
-        ),
-      ));
+      flagSection.appendChild(collapsible(t('charge.methodRisk'), () => methodBody('charge.methodRiskBody')));
 
       container.appendChild(flagSection);
     }
@@ -317,11 +298,9 @@ export async function renderCharge(container) {
     let selectedMonday = thisMonday;
 
     const polarizedSection = el('div', { className: 'ca-section' },
-      sectionTitle('Répartition 80/20 de la semaine'),
+      sectionTitle(t('charge.polarizedTitle')),
       el('div', { className: 'ca-metric-explain', style: { marginBottom: '16px' } },
-        'L\'entraînement polarisé vise 80% du volume en endurance fondamentale (FC < 80% max) '
-        + 'et 20% en intensité seuil ou supérieure (FC ≥ 80% max). '
-        + 'Méthode validée par Seiler (2010) et Stöggl & Sperlich (2014).',
+        t('charge.polarizedExplain'),
       ),
     );
 
@@ -336,7 +315,7 @@ export async function renderCharge(container) {
       weekLabel.textContent = _fmtWeekRange(selectedMonday);
       contentArea.innerHTML = '';
       contentArea.appendChild(_buildPolarizedBlock(allActivities, selectedMonday));
-    } }, '\u25C0 Semaine précédente');
+    } }, t('charge.prevWeek'));
 
     const nextBtn = el('button', { className: 'ca-btn', onClick: () => {
       const next = new Date(selectedMonday);
@@ -347,7 +326,7 @@ export async function renderCharge(container) {
         contentArea.innerHTML = '';
         contentArea.appendChild(_buildPolarizedBlock(allActivities, selectedMonday));
       }
-    } }, 'Semaine suivante \u25B6');
+    } }, t('charge.nextWeek'));
 
     const weekSelector = el('div', {
       style: { display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '20px', flexWrap: 'wrap' },
@@ -360,28 +339,7 @@ export async function renderCharge(container) {
     polarizedSection.appendChild(contentArea);
 
     // Collapsible explanation
-    polarizedSection.appendChild(collapsible('Méthode de calcul — Zones FC et répartition 80/20', () =>
-      el('div', {},
-        el('p', {}, 'Les zones de fréquence cardiaque sont calculées en pourcentage de la FC maximale (FC_max), '
-          + 'configurée dans le profil athlète. La répartition utilise les minutes par zone déjà calculées '
-          + 'pour chaque activité à partir des streams Strava (échantillonnage seconde par seconde).'),
-        el('p', { style: { fontWeight: '500' } }, 'Définition des 5 zones :'),
-        el('p', {}, 'Z1 (Récupération) : < 60% FC_max — effort très léger, échauffement, récupération.'),
-        el('p', {}, 'Z2 (Endurance) : 60-70% FC_max — endurance de base, conversation possible.'),
-        el('p', {}, 'Z3 (Tempo) : 70-80% FC_max — effort modéré, limite haute de l\'endurance fondamentale.'),
-        el('p', {}, 'Z4 (Seuil) : 80-90% FC_max — effort soutenu, seuil lactique, tempo rapide.'),
-        el('p', {}, 'Z5 (VO2max) : > 90% FC_max — effort maximal, intervalles courts.'),
-        el('p', { style: { fontWeight: '500', marginTop: '12px' } }, 'Règle 80/20 :'),
-        el('p', {}, 'Endurance fondamentale = Z1 + Z2 + Z3 (toute minute passée sous 80% FC_max).'),
-        el('p', {}, 'Seuil et au-dessus = Z4 + Z5 (toute minute passée au-dessus de 80% FC_max).'),
-        el('p', {}, 'L\'objectif est d\'avoir ~80% du temps total d\'entraînement hebdomadaire en endurance '
-          + 'fondamentale et ~20% en intensité. Une marge de 75-85% est considérée comme acceptable.'),
-        el('p', { style: { marginTop: '8px' } },
-          'Références : Seiler S. (2010). What is Best Practice for Training Intensity and Duration Distribution in Endurance Athletes? '
-          + 'Int J Sports Physiol Perform. Stöggl T, Sperlich B. (2014). Polarized training has greater impact on key endurance variables. '
-          + 'Front Physiol 5:33.'),
-      ),
-    ));
+    polarizedSection.appendChild(collapsible(t('charge.methodZones'), () => methodBody('charge.methodZonesBody')));
 
     container.appendChild(polarizedSection);
 

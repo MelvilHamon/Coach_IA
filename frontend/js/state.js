@@ -11,3 +11,15 @@ export function getCurrentSport() {
 export function setCurrentSport(sport) {
   _currentSport = sport;
 }
+
+let _pendingActivityId = null;
+
+export function setPendingActivityId(id) {
+  _pendingActivityId = id != null ? Number(id) : null;
+}
+
+export function consumePendingActivityId() {
+  const id = _pendingActivityId;
+  _pendingActivityId = null;
+  return id;
+}

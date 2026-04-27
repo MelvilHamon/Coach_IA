@@ -2,6 +2,8 @@
  * components.js — Composants HTML réutilisables.
  */
 
+import { t, getLang } from './i18n.js';
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 export function el(tag, attrs = {}, ...children) {
@@ -28,16 +30,18 @@ export function fmt(v, decimals = 1) {
   return n.toFixed(decimals);
 }
 
+function _locale() { return getLang() === 'en' ? 'en-US' : 'fr-FR'; }
+
 export function fmtDate(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
-  return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  return d.toLocaleDateString(_locale(), { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
 export function fmtDateShort(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
-  return d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase();
+  return d.toLocaleDateString(_locale(), { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase();
 }
 
 // ── Metric Card ─────────────────────────────────────────────────────────────
@@ -135,11 +139,11 @@ export function sectionTitle(text) {
 // ── Loading / Empty ─────────────────────────────────────────────────────────
 
 export function loading() {
-  return el('div', { className: 'ca-loading' }, 'Chargement…');
+  return el('div', { className: 'ca-loading' }, t('common.loading'));
 }
 
-export function empty(text = 'Pas de données.') {
-  return el('div', { className: 'ca-empty' }, text);
+export function empty(text) {
+  return el('div', { className: 'ca-empty' }, text != null ? text : t('common.empty'));
 }
 
 // ── Collapsible explanation block ────────────────────────────────────────────
@@ -163,6 +167,19 @@ export function collapsible(title, contentFn) {
   }, title);
 
   return el('div', { className: 'ca-collapsible' }, toggle, body);
+}
+
+// ── Method body (paragraphs from i18n key) ──────────────────────────────────
+
+export function methodBody(key) {
+  const paragraphs = t(key);
+  const div = el('div', {});
+  if (Array.isArray(paragraphs)) {
+    for (const p of paragraphs) {
+      div.appendChild(el('p', p.italic ? { style: { fontStyle: 'italic' } } : {}, p.text));
+    }
+  }
+  return div;
 }
 
 // ── Distribution bar ────────────────────────────────────────────────────────
@@ -197,16 +214,16 @@ export function distBar(label, count, pct) {
 
 // ── Flag pill ───────────────────────────────────────────────────────────────
 
-const FLAG_LABELS = {
-  acwr:         'ACWR élevé',
-  monotony:     'Monotonie',
-  load_spike:   'Pic de charge',
-  consecutive:  'Jours consécutifs',
+const FLAG_KEYS = {
+  acwr:         'components.flagAcwr',
+  monotony:     'components.flagMonotony',
+  load_spike:   'components.flagSpike',
+  consecutive:  'components.flagConsec',
 };
 
 export function flagPill(key, active) {
   return el('span', { className: `ca-flag ${active ? 'active' : 'off'}` },
-    FLAG_LABELS[key] || key,
+    FLAG_KEYS[key] ? t(FLAG_KEYS[key]) : key,
   );
 }
 
@@ -253,10 +270,10 @@ export function reviewBox(review) {
 
     // Section blocks
     const sectionDefs = [
-      { key: 'execution', label: 'Execution' },
-      { key: 'charge', label: 'Charge & coherence' },
-      { key: 'fatigue', label: 'Fatigue & recuperation' },
-      { key: 'conseil', label: 'Conseil' },
+      { key: 'execution', label: t('components.sectionExecution') },
+      { key: 'charge', label: t('components.sectionCharge') },
+      { key: 'fatigue', label: t('components.sectionFatigue') },
+      { key: 'conseil', label: t('components.sectionConseil') },
     ];
     for (const { key, label } of sectionDefs) {
       const text = sections[key];
@@ -292,9 +309,9 @@ export function weeklyReviewBox(review) {
     // Header with score and stats
     const score = review.score;
     const headerParts = [];
-    if (review.activities_count != null) headerParts.push(`${review.activities_count} seances`);
-    if (review.total_km != null) headerParts.push(`${review.total_km} km`);
-    if (review.total_elevation != null) headerParts.push(`${review.total_elevation} m D+`);
+    if (review.activities_count != null) headerParts.push(t('components.sessionsCount', { n: review.activities_count }));
+    if (review.total_km != null) headerParts.push(t('components.kmTotal', { km: review.total_km }));
+    if (review.total_elevation != null) headerParts.push(t('components.elevTotal', { m: review.total_elevation }));
 
     const headerRow = el('div', { style: { display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' } });
     if (score != null) {
@@ -330,10 +347,10 @@ export function weeklyReviewBox(review) {
 
     // Section blocks
     const sectionDefs = [
-      { key: 'volume', label: 'Volume & repartition' },
-      { key: 'intensite', label: 'Intensite & charge' },
-      { key: 'recuperation', label: 'Recuperation' },
-      { key: 'prochaine_semaine', label: 'Semaine suivante' },
+      { key: 'volume', label: t('components.sectionVolume') },
+      { key: 'intensite', label: t('components.sectionIntensity') },
+      { key: 'recuperation', label: t('components.sectionRecovery') },
+      { key: 'prochaine_semaine', label: t('components.sectionNextWeek') },
     ];
     for (const { key, label } of sectionDefs) {
       const text = sections[key];

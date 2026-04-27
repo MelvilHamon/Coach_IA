@@ -7,10 +7,12 @@
 import { api } from '../api.js';
 import {
   el, sectionTitle, badge, detailRow, metricCard, fmt, fmtDate, loading, empty,
-  acwrColor, riskColor, reviewBox, flagPill, collapsible,
+  acwrColor, riskColor, reviewBox, flagPill, collapsible, methodBody,
 } from '../components.js';
 import { plotZones, plotSpeed, plotAltitude, plotGap, plotBpm, plotPower, plotSplits, enableBlockSelect, computeBlockMetrics, updateBlockShapes } from '../charts.js';
 import { renderMap } from '../map.js';
+import { consumePendingActivityId } from '../state.js';
+import { t } from '../i18n.js';
 
 let _actSelect = null;
 
@@ -24,7 +26,7 @@ export async function renderAnalyse(container) {
 
     const activities = activitiesRes.activities;
     if (!activities.length) {
-      container.appendChild(empty('Aucune activité.'));
+      container.appendChild(empty(t('common.noActivities')));
       return;
     }
 
@@ -46,7 +48,13 @@ export async function renderAnalyse(container) {
     container.appendChild(contentArea);
 
     _actSelect.addEventListener('change', () => loadActivity(Number(_actSelect.value), contentArea));
-    loadActivity(activities[0].id, contentArea);
+
+    const pendingId = consumePendingActivityId();
+    const initialId = (pendingId != null && activities.some(a => a.id === pendingId))
+      ? pendingId
+      : activities[0].id;
+    _actSelect.value = String(initialId);
+    loadActivity(initialId, contentArea);
 
   } catch (err) {
     container.innerHTML = '';
@@ -80,7 +88,7 @@ async function loadActivity(actId, target) {
     target.innerHTML = '';
 
     if (detail.error) {
-      target.appendChild(empty('Activité introuvable.'));
+      target.appendChild(empty(t('common.activityNotFound')));
       return;
     }
 
@@ -89,7 +97,7 @@ async function loadActivity(actId, target) {
     const rightCol = el('div');
 
     // Metrics
-    leftCol.appendChild(sectionTitle('Métriques'));
+    leftCol.appendChild(sectionTitle(t('analyse.metrics')));
 
     const acwr_v = detail.acwr_km;
     const risk = detail.injury_risk_label || '—';
@@ -106,38 +114,38 @@ async function loadActivity(actId, target) {
     let rows;
     if (isVelo) {
       rows = el('div', { className: 'ca-detail-rows' },
-        detailRow('Type', badge(detail.session_type)),
-        detailRow('Distance', distKm ? fmt(distKm, 1) + ' km' : '—'),
-        detailRow('Durée', durMin ? fmt(durMin, 0) + ' min' : '—'),
-        detailRow('Vitesse moy.', speedKmh != null ? fmt(speedKmh, 1) + ' km/h' : '—'),
-        detailRow('Dénivelé', elevM ? fmt(elevM, 0) + ' m' : '—'),
-        detailRow('D+/km', elevPerKm != null ? fmt(elevPerKm, 1) + ' m/km' : '—'),
-        detailRow('FC moy.', detail['Fréquence cardiaque (bpm)'] != null ? fmt(detail['Fréquence cardiaque (bpm)'], 0) + ' bpm' : '—'),
+        detailRow(t('common.type'), badge(detail.session_type)),
+        detailRow(t('common.distance'), distKm ? fmt(distKm, 1) + ' km' : '—'),
+        detailRow(t('common.duration'), durMin ? fmt(durMin, 0) + ' min' : '—'),
+        detailRow(t('analyse.bikeAvg'), speedKmh != null ? fmt(speedKmh, 1) + ' km/h' : '—'),
+        detailRow(t('common.elevation'), elevM ? fmt(elevM, 0) + ' m' : '—'),
+        detailRow(t('analyse.elevPerKm'), elevPerKm != null ? fmt(elevPerKm, 1) + ' m/km' : '—'),
+        detailRow(t('common.avgHr'), detail['Fréquence cardiaque (bpm)'] != null ? fmt(detail['Fréquence cardiaque (bpm)'], 0) + ' bpm' : '—'),
         detailRow('TRIMP', fmt(detail.trimp, 0)),
         detailRow('hrTSS', fmt(detail.hrtss, 0)),
-        detailRow('EF', detail.efficiency_factor != null ? fmt(detail.efficiency_factor, 4) : '—', {},
+        detailRow(t('analyse.ef'), detail.efficiency_factor != null ? fmt(detail.efficiency_factor, 4) : '—', {},
           detail.efficiency_factor != null ? undefined : undefined),
-        detailRow('Découplage', detail.decoupling_pct != null ? fmt(detail.decoupling_pct, 1) + '%' : '—'),
-        detailRow('ACWR', fmt(acwr_v, 2), { color: acwrColor(acwr_v) }),
-        detailRow('Risque', `${risk} (${fmt(detail.injury_risk_score, 0)}/100)`, { color: riskColor(risk) }),
-        detailRow('Form TSB', fmt(detail.tsb, 0)),
+        detailRow(t('analyse.decoupling'), detail.decoupling_pct != null ? fmt(detail.decoupling_pct, 1) + '%' : '—'),
+        detailRow(t('analyse.acwr'), fmt(acwr_v, 2), { color: acwrColor(acwr_v) }),
+        detailRow(t('analyse.risk'), `${risk} (${fmt(detail.injury_risk_score, 0)}/100)`, { color: riskColor(risk) }),
+        detailRow(t('analyse.formTsb'), fmt(detail.tsb, 0)),
       );
     } else {
       rows = el('div', { className: 'ca-detail-rows' },
-        detailRow('Type', badge(detail.session_type)),
-        detailRow('Distance', distKm ? fmt(distKm, 1) + ' km' : '—'),
-        detailRow('Durée', durMin ? fmt(durMin, 0) + ' min' : '—'),
-        detailRow('Allure', detail.pace_display ? detail.pace_display + ' min/km' : '—'),
-        detailRow('FC moy.', detail['Fréquence cardiaque (bpm)'] != null ? fmt(detail['Fréquence cardiaque (bpm)'], 0) + ' bpm' : '—'),
-        detailRow('Dénivelé', elevM ? fmt(elevM, 0) + ' m' : '—'),
+        detailRow(t('common.type'), badge(detail.session_type)),
+        detailRow(t('common.distance'), distKm ? fmt(distKm, 1) + ' km' : '—'),
+        detailRow(t('common.duration'), durMin ? fmt(durMin, 0) + ' min' : '—'),
+        detailRow(t('common.pace'), detail.pace_display ? detail.pace_display + ' min/km' : '—'),
+        detailRow(t('common.avgHr'), detail['Fréquence cardiaque (bpm)'] != null ? fmt(detail['Fréquence cardiaque (bpm)'], 0) + ' bpm' : '—'),
+        detailRow(t('common.elevation'), elevM ? fmt(elevM, 0) + ' m' : '—'),
         detailRow('TRIMP', fmt(detail.trimp, 0)),
         detailRow('hrTSS', fmt(detail.hrtss, 0)),
-        detailRow('EF', fmt(detail.efficiency_factor, 4)),
-        detailRow('Découplage', detail.decoupling_pct != null ? fmt(detail.decoupling_pct, 1) + '%' : '—'),
-        detailRow('VO2max est.', detail.vo2max_estimate != null ? fmt(detail.vo2max_estimate, 1) + ' mL/kg/min' : '—'),
-        detailRow('ACWR', fmt(acwr_v, 2), { color: acwrColor(acwr_v) }),
-        detailRow('Risque', `${risk} (${fmt(detail.injury_risk_score, 0)}/100)`, { color: riskColor(risk) }),
-        detailRow('Form TSB', fmt(detail.tsb, 0)),
+        detailRow(t('analyse.ef'), fmt(detail.efficiency_factor, 4)),
+        detailRow(t('analyse.decoupling'), detail.decoupling_pct != null ? fmt(detail.decoupling_pct, 1) + '%' : '—'),
+        detailRow(t('analyse.vo2max'), detail.vo2max_estimate != null ? fmt(detail.vo2max_estimate, 1) + ' mL/kg/min' : '—'),
+        detailRow(t('analyse.acwr'), fmt(acwr_v, 2), { color: acwrColor(acwr_v) }),
+        detailRow(t('analyse.risk'), `${risk} (${fmt(detail.injury_risk_score, 0)}/100)`, { color: riskColor(risk) }),
+        detailRow(t('analyse.formTsb'), fmt(detail.tsb, 0)),
       );
     }
     leftCol.appendChild(rows);
@@ -160,7 +168,7 @@ async function loadActivity(actId, target) {
 
       analysisBox.appendChild(el('div', {
         style: { fontWeight: '700', marginBottom: '6px', fontSize: '13px' },
-      }, `Analyse auto : ${sType}`));
+      }, t('analyse.autoAnalysis', { type: sType })));
 
       for (const p of sessionAnalysisRes.patterns) {
         analysisBox.appendChild(el('div', {
@@ -170,7 +178,7 @@ async function loadActivity(actId, target) {
 
       analysisBox.appendChild(el('div', {
         style: { marginTop: '6px', fontSize: '11px', color: 'var(--ink-mid, #787470)', fontStyle: 'italic' },
-      }, 'Détection automatique — sélectionner des blocs manuels sur le graphe d\'allure pour un résultat plus précis.'));
+      }, t('analyse.autoNote')));
 
       leftCol.appendChild(analysisBox);
     }
@@ -186,7 +194,7 @@ async function loadActivity(actId, target) {
       for (const slot of ['shoes', 'watch']) {
         const slotGear = allGear.filter(g => g.type === slot && !g.retired);
         if (!slotGear.length) continue;
-        const label = slot === 'shoes' ? 'Chaussures' : 'Montre';
+        const label = slot === 'shoes' ? t('analyse.shoes') : t('analyse.watch');
         const select = el('select', { className: 'ca-select', style: { fontSize: '11px', minWidth: '120px' } });
         select.appendChild(el('option', { value: '' }, `— ${label} —`));
         for (const g of slotGear) {
@@ -204,14 +212,14 @@ async function loadActivity(actId, target) {
     }
 
     // Zones FC
-    rightCol.appendChild(sectionTitle('Zones FC'));
+    rightCol.appendChild(sectionTitle(t('analyse.hrZones')));
     const zonesEl = el('div', { id: 'chart-zones' });
     rightCol.appendChild(zonesEl);
 
     // Splits under zones FC (same right column) — running only
     const hasSplits = !isVelo && splitsRes && splitsRes.splits?.length;
     if (hasSplits) {
-      rightCol.appendChild(sectionTitle('Allure par kilomètre'));
+      rightCol.appendChild(sectionTitle(t('analyse.paceByKm')));
       rightCol.appendChild(el('div', { id: 'chart-splits' }));
     }
 
@@ -230,7 +238,7 @@ async function loadActivity(actId, target) {
     // ── GPS Map ──
     if (gpsRes && gpsRes.points?.length > 1) {
       const mapSection = el('div', { className: 'ca-section' },
-        sectionTitle('Parcours'),
+        sectionTitle(t('analyse.route')),
       );
       const mapEl = el('div', { className: 'ca-map-container', id: 'gps-map' });
       mapSection.appendChild(mapEl);
@@ -239,10 +247,10 @@ async function loadActivity(actId, target) {
       if (gpsRes.metrics) {
         const gm = gpsRes.metrics;
         const gpsMetrics = el('div', { style: { display: 'flex', gap: '24px', flexWrap: 'wrap', marginTop: '12px', fontSize: '10px', color: 'var(--ink-mid)' } },
-          el('span', {}, `Distance GPS : ${fmt(gm.distance_m / 1000, 2)} km`),
-          el('span', {}, `D+ : ${fmt(gm.elevation_gain_m, 0)} m`),
-          el('span', {}, `D− : ${fmt(gm.elevation_loss_m, 0)} m`),
-          el('span', {}, `Vitesse moy. : ${fmt(gm.avg_speed_kmh, 1)} km/h`),
+          el('span', {}, t('analyse.gpsDist', { km: fmt(gm.distance_m / 1000, 2) })),
+          el('span', {}, t('analyse.gpsUp', { m: fmt(gm.elevation_gain_m, 0) })),
+          el('span', {}, t('analyse.gpsDown', { m: fmt(gm.elevation_loss_m, 0) })),
+          el('span', {}, t('analyse.gpsAvgSpeed', { kmh: fmt(gm.avg_speed_kmh, 1) })),
         );
         mapSection.appendChild(gpsMetrics);
       }
@@ -267,18 +275,18 @@ async function loadActivity(actId, target) {
 
     if (hasSpeed || hasAlt || hasBpm) {
       const profileSection = el('div', { className: 'ca-section' },
-        sectionTitle('Profils allure & altitude'),
+        sectionTitle(t('analyse.profilesTitle')),
         el('div', { className: 'ca-metric-explain', style: { marginBottom: '16px' } },
-          'Allure lissée par filtre de Savitzky-Golay (fenêtre 11 points). Le dénivelé (gris, axe droit) est affiché en fond pour contextualiser les variations d\'allure.',
+          t('analyse.profilesExplain'),
         ),
       );
 
       // ── Block toolbar (only if speed data available) ──
       let blockListEl, blockSummaryEl;
       if (hasSpeed) {
-        const addEffortBtn = el('button', { className: 'ca-btn accent', style: { fontSize: '11px', padding: '4px 10px' } }, '+ Bloc effort');
-        const stopBtn = el('button', { className: 'ca-btn', style: { fontSize: '11px', padding: '4px 10px', display: 'none' } }, 'Terminer');
-        const clearBtn = el('button', { className: 'ca-btn', style: { fontSize: '11px', padding: '4px 10px' } }, 'Tout effacer');
+        const addEffortBtn = el('button', { className: 'ca-btn accent', style: { fontSize: '11px', padding: '4px 10px' } }, t('analyse.addEffort'));
+        const stopBtn = el('button', { className: 'ca-btn', style: { fontSize: '11px', padding: '4px 10px', display: 'none' } }, t('analyse.stop'));
+        const clearBtn = el('button', { className: 'ca-btn', style: { fontSize: '11px', padding: '4px 10px' } }, t('analyse.clearAll'));
         const modeLabel = el('span', { style: { fontSize: '11px', color: 'var(--ink-mid)', fontStyle: 'italic' } });
 
         const toolbar = el('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap' } },
@@ -311,7 +319,7 @@ async function loadActivity(actId, target) {
             const b = manualBlocks[i];
             const m = computeBlockMetrics(b, distKm, speedRes.speed_kmh, bpmArr);
             const color = b.type === 'effort' ? 'var(--accent, #2563EB)' : 'var(--success, #2D6A4F)';
-            const label = b.type === 'effort' ? 'Effort' : 'Récup';
+            const label = b.type === 'effort' ? t('analyse.effort') : t('analyse.recovery');
             const idx = b.type === 'effort' ? effortBlocks.indexOf(b) + 1 : '';
 
             const removeBtn = el('button', {
@@ -401,7 +409,7 @@ async function loadActivity(actId, target) {
 
         function enterSelectMode(blockType) {
           if (_disableSelect) _disableSelect();
-          modeLabel.textContent = blockType === 'effort' ? 'Cliquer-glisser pour sélectionner un bloc effort' : 'Sélection récup';
+          modeLabel.textContent = blockType === 'effort' ? t('analyse.selectEffort') : t('analyse.selectRecov');
           addEffortBtn.style.display = 'none';
           stopBtn.style.display = '';
 
@@ -452,12 +460,12 @@ async function loadActivity(actId, target) {
       const hasPower = powerRes && powerRes.power_w?.length;
       let powerBlockListEl, powerBlockSummaryEl;
       if (hasPower) {
-        profileSection.appendChild(el('h4', { style: { margin: '16px 0 8px', fontSize: '13px', color: 'var(--ink-light)' } }, 'Puissance'));
+        profileSection.appendChild(el('h4', { style: { margin: '16px 0 8px', fontSize: '13px', color: 'var(--ink-light)' } }, t('analyse.power')));
 
         // Power block toolbar
-        const addPowerEffortBtn = el('button', { className: 'ca-btn accent', style: { fontSize: '11px', padding: '4px 10px' } }, '+ Bloc effort');
-        const stopPowerBtn = el('button', { className: 'ca-btn', style: { fontSize: '11px', padding: '4px 10px', display: 'none' } }, 'Terminer');
-        const clearPowerBtn = el('button', { className: 'ca-btn', style: { fontSize: '11px', padding: '4px 10px' } }, 'Tout effacer');
+        const addPowerEffortBtn = el('button', { className: 'ca-btn accent', style: { fontSize: '11px', padding: '4px 10px' } }, t('analyse.addEffort'));
+        const stopPowerBtn = el('button', { className: 'ca-btn', style: { fontSize: '11px', padding: '4px 10px', display: 'none' } }, t('analyse.stop'));
+        const clearPowerBtn = el('button', { className: 'ca-btn', style: { fontSize: '11px', padding: '4px 10px' } }, t('analyse.clearAll'));
         const powerModeLabel = el('span', { style: { fontSize: '11px', color: 'var(--ink-mid)', fontStyle: 'italic' } });
 
         const powerToolbar = el('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap' } },
@@ -500,7 +508,7 @@ async function loadActivity(actId, target) {
             powerBlockListEl.appendChild(el('div', {
               style: { display: 'flex', alignItems: 'center', gap: '8px', padding: '3px 0', fontSize: '12px', fontFamily: "'JetBrains Mono', monospace" },
             },
-              el('span', { style: { color: '#EA580C', fontWeight: '600', minWidth: '55px' } }, `Effort ${idx}`),
+              el('span', { style: { color: '#EA580C', fontWeight: '600', minWidth: '55px' } }, `${t('analyse.effort')} ${idx}`),
               el('span', {}, `${b.start_km.toFixed(2)} → ${b.end_km.toFixed(2)} km`),
               el('span', { style: { color: 'var(--ink-mid)' } }, `${m.distance_m}m`),
               el('span', { style: { fontWeight: '600' } }, `${m.avg_power_w != null ? m.avg_power_w + ' W' : '—'}`),
@@ -574,7 +582,7 @@ async function loadActivity(actId, target) {
 
         function enterPowerSelectMode() {
           if (_disablePowerSelect) _disablePowerSelect();
-          powerModeLabel.textContent = 'Cliquer-glisser pour sélectionner un bloc effort';
+          powerModeLabel.textContent = t('analyse.selectEffort');
           addPowerEffortBtn.style.display = 'none';
           stopPowerBtn.style.display = '';
 
@@ -628,16 +636,16 @@ async function loadActivity(actId, target) {
     const hasGap = !isVelo && gapRes && gapRes.gap_speed_array?.length;
     if (hasGap) {
       const gapSection = el('div', { className: 'ca-section' },
-        sectionTitle('Gradient Adjusted Pace'),
+        sectionTitle(t('analyse.gapTitle')),
         el('div', { className: 'ca-metric-explain', style: { marginBottom: '16px' } },
-          'Allure corrigée de la pente. Permet de comparer l\'effort sur terrain vallonné à un équivalent plat.',
+          t('analyse.gapExplain'),
         ),
         el('div', { className: 'ca-metrics-row', style: { marginBottom: '16px' } },
-          metricCard('GAP moyen', gapRes.gap_avg_pace, 'min/km', {
-            explain: 'Allure ajustée moyenne sur l\'ensemble du parcours.',
+          metricCard(t('analyse.gapAvg'), gapRes.gap_avg_pace, 'min/km', {
+            explain: t('analyse.gapAvgExplain'),
           }),
-          metricCard('GAP vitesse', fmt(gapRes.gap_avg_kmh, 1), 'km/h', {
-            explain: 'Vitesse ajustée correspondante.',
+          metricCard(t('analyse.gapSpeed'), fmt(gapRes.gap_avg_kmh, 1), 'km/h', {
+            explain: t('analyse.gapSpeedExplain'),
           }),
         ),
         el('div', { className: 'ca-chart-card' },
@@ -645,20 +653,7 @@ async function loadActivity(actId, target) {
         ),
       );
 
-      const refText = gapRes.reference
-        || 'Modèle empirique Strava Engineering (Robb D., 2017).';
-      gapSection.appendChild(collapsible('Méthode de calcul — GAP', () =>
-        el('div', {},
-          el('p', {}, 'Le Gradient Adjusted Pace corrige la vitesse en fonction de la pente du terrain '
-            + 'via une lookup table empirique ajustée sur ~6 millions de runs.'),
-          el('p', { style: { fontStyle: 'italic' } },
-            'GAP_speed = speed / facteur(gradient%)'),
-          el('p', {}, 'Le facteur est interpolé depuis une table couvrant -50% à +50% de pente. '
-            + 'En montée, le GAP est plus rapide que l\'allure réelle. '
-            + 'En descente douce (-5% à -15%), le bénéfice est faible contrairement au modèle linéaire.'),
-          el('p', {}, refText),
-        ),
-      ));
+      gapSection.appendChild(collapsible(t('analyse.methodGap'), () => methodBody('analyse.methodGapBody')));
 
       target.appendChild(gapSection);
       plotGap(document.getElementById('chart-gap'), gapRes);
@@ -666,7 +661,7 @@ async function loadActivity(actId, target) {
 
     // ── Ressentis (feedback) ──
     const feedbackSection = el('div', { className: 'ca-section' },
-      sectionTitle('Ressentis'),
+      sectionTitle(t('analyse.feelings')),
     );
 
     const existingFb = feedbackRes?.feedback || null;
@@ -686,7 +681,7 @@ async function loadActivity(actId, target) {
 
     const sensationsInput = el('textarea', {
       className: 'ca-input',
-      placeholder: 'Comment te sentais-tu pendant cette séance ? (jambes lourdes, bonne forme, douleur...)',
+      placeholder: t('analyse.sensationsPlaceholder'),
       rows: '3',
       style: { width: '100%', resize: 'vertical' },
     });
@@ -696,14 +691,14 @@ async function loadActivity(actId, target) {
 
     const fbSaveBtn = el('button', { className: 'ca-btn accent', onClick: async () => {
       fbSaveBtn.disabled = true;
-      fbSaveBtn.textContent = 'Enregistrement...';
+      fbSaveBtn.textContent = t('common.saving');
       fbMsg.style.display = 'none';
       try {
         await api.saveFeedback(actId, {
           sensations: sensationsInput.value || null,
           difficulty: parseInt(difficultyInput.value),
         });
-        fbMsg.textContent = 'Ressentis enregistrés';
+        fbMsg.textContent = t('analyse.feelingsSaved');
         fbMsg.style.color = 'var(--success, #2D6A4F)';
         fbMsg.style.display = '';
       } catch (e) {
@@ -712,13 +707,13 @@ async function loadActivity(actId, target) {
         fbMsg.style.display = '';
       } finally {
         fbSaveBtn.disabled = false;
-        fbSaveBtn.textContent = 'Enregistrer';
+        fbSaveBtn.textContent = t('common.save');
       }
-    } }, 'Enregistrer');
+    } }, t('common.save'));
 
     feedbackSection.appendChild(
       el('div', { style: { display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' } },
-        el('label', { style: { fontWeight: '600', fontSize: '13px', whiteSpace: 'nowrap' } }, 'Difficulté ressentie'),
+        el('label', { style: { fontWeight: '600', fontSize: '13px', whiteSpace: 'nowrap' } }, t('analyse.perceivedDifficulty')),
         difficultyInput,
         difficultyLabel,
       ),
@@ -729,12 +724,12 @@ async function loadActivity(actId, target) {
 
     // ── Review ──
     const reviewSection = el('div', { className: 'ca-section' },
-      sectionTitle('Review coach'),
+      sectionTitle(t('common.reviewCoach')),
     );
 
     const reviewContent = el('div');
     const genBtn = el('button', { className: 'ca-btn accent', onClick: async () => {
-      genBtn.textContent = 'Génération…';
+      genBtn.textContent = t('common.generating');
       genBtn.disabled = true;
       try {
         const res = await api.generateReview(actId);
@@ -744,17 +739,17 @@ async function loadActivity(actId, target) {
       } catch (e) {
         reviewContent.appendChild(el('div', { className: 'ca-error' }, e.message));
       } finally {
-        genBtn.textContent = 'Générer / Régénérer';
+        genBtn.textContent = t('common.generateOrRegenerate');
         genBtn.disabled = false;
       }
-    } }, 'Générer / Régénérer');
+    } }, t('common.generateOrRegenerate'));
 
     reviewSection.appendChild(genBtn);
 
     if (reviewRes?.review) {
       reviewContent.appendChild(reviewBox(reviewRes.review));
     } else {
-      reviewContent.appendChild(el('div', { className: 'ca-empty' }, 'Pas de review — cliquer pour en générer une.'));
+      reviewContent.appendChild(el('div', { className: 'ca-empty' }, t('common.noReview')));
     }
     reviewSection.appendChild(reviewContent);
     target.appendChild(reviewSection);

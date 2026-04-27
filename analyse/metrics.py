@@ -1141,7 +1141,8 @@ def compute_gap(points: list[dict]) -> dict:
     Formule :
         gradient_pct = (alt[i+1] - alt[i]) / distance_segment × 100
         facteur      = interp(_GAP_TABLE, gradient_pct)
-        GAP_speed    = speed / facteur
+        GAP_speed    = speed × facteur  # facteur = coût énergétique relatif
+                                        # (montée → facteur > 1 → équivalent plat plus rapide)
 
     Cas limites :
     - distance_segment < 1 m → gradient = 0 (évite division par zéro)
@@ -1181,7 +1182,7 @@ def compute_gap(points: list[dict]) -> dict:
         else:
             gradient_pct = (alt_interp[i] - alt_interp[i - 1]) / d * 100
             facteur = _gap_factor(gradient_pct)
-            gap_speeds[i] = speeds[i] / facteur
+            gap_speeds[i] = speeds[i] * facteur
 
     # Allure GAP en s/km
     with np.errstate(divide="ignore", invalid="ignore"):
