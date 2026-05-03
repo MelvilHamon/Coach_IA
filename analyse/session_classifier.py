@@ -36,6 +36,7 @@ if _ANALYSE_DIR not in sys.path:
     sys.path.insert(0, _ANALYSE_DIR)
 
 from detect_fract_v2 import analyze_fractionne
+from detect_fract_velo import analyze_fractionne_velo
 from sport_mapping import get_sport
 
 
@@ -101,6 +102,7 @@ def detect_session_type(
             hr_mean=hr_mean,
             hr_max=hr_max,
             config=cfg,
+            stream_path=stream_path,
         )
 
     # ── 3. Outlier : "Run" Strava à allure de marche (< 4 km/h ~ > 15 min/km)
@@ -194,20 +196,38 @@ def _classify_velo(
     hr_mean: float | None,
     hr_max: int,
     config: dict,
+    stream_path: str | None = None,
 ) -> str:
     """
     Classification des séances vélo.
 
     Hiérarchie :
-      1. Récupération vélo : durée courte + FC basse
-      2. Sortie longue vélo : distance ≥ seuil (défaut 60 km)
-      3. Tempo vélo : FC ≥ 80% FC_max
-      4. Endurance vélo : défaut
+      1. Intervalles vélo : detect_fract_velo (mode power si capteur, sinon
+         fallback vitesse + FC, tolérant aux faux positifs)
+      2. Récupération vélo : durée courte + FC basse
+      3. Sortie longue vélo : distance ≥ seuil (défaut 60 km)
+      4. Tempo vélo : FC ≥ 80% FC_max
+      5. Endurance vélo : défaut
     """
     velo_cfg = config.get("velo_classifier", {})
     long_ride_km = velo_cfg.get("long_ride_threshold_km", 60.0)
     recov_max_dur = velo_cfg.get("recovery_max_duration_min", 45)
     recov_max_hrp = velo_cfg.get("recovery_max_hr_pct", 0.65)
+
+    # Intervalles vélo (détection via stream)
+    if stream_path and os.path.exists(stream_path):
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                result = analyze_fractionne_velo(
+                    stream_path,
+                    verbose=False,
+                    config=config.get("detection_fractionne_velo", {}),
+                )
+            if result.get("is_fractionne"):
+                return "intervalles vélo"
+        except Exception:
+            pass  # parsing/sklearn error → on continue avec les règles suivantes
 
     # Récupération vélo
     if hr_mean and duration_min > 0:
