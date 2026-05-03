@@ -665,13 +665,18 @@ def _run_pipeline(user_id: str):
         # ── Étape 8 : Analyse enrichie ───────────────────────────────────
         state_now = _load_file_state(paths)
         need, reason = _needs_analysis(state_now, paths)
+        analysis_ran = False
         if need:
             try:
                 from run_analysis import run_analysis
                 with redirect_stdout(buf):
-                    run_analysis(data_dir=data_dir, config_path=paths.config_json)
+                    # PR calculé séparément (Étape 9) pour ne pas bloquer
+                    # l'analyse principale sur les users à fort volume GPS.
+                    run_analysis(data_dir=data_dir, config_path=paths.config_json,
+                                 skip_pr=True)
                 ss["steps_done"].append("analysis")
                 result["steps_run"].append("analysis")
+                analysis_ran = True
                 from api.deps import invalidate_cache
                 invalidate_cache(["activities", "metrics"], user_id=user_id)
             except SystemExit:
@@ -683,6 +688,28 @@ def _run_pipeline(user_id: str):
                 result["steps_run"].append("analysis")
         else:
             result["steps_skipped"].append({"step": "analysis", "reason": reason})
+
+        # ── Étape 9 : Personal Records (cache incrémental + R2 parallèle) ──
+        # Isolée du sync principal : un échec ici ne casse ni l'analyse ni le
+        # reste du pipeline. Coût ≈ O(nouvelles activités GPS) grâce au cache
+        # `pr_cache_{run,velo}.json`.
+        new_gps = (result.get("new_gps_matches", 0) or 0) + (result.get("strava_gps_fetched", 0) or 0)
+        if analysis_ran or new_gps > 0 or not state_now.get("pr_last_run"):
+            try:
+                from run_analysis import update_personal_records
+                with redirect_stdout(buf):
+                    update_personal_records(data_dir=data_dir)
+                ss["steps_done"].append("personal_records")
+                result["steps_run"].append("personal_records")
+                fs = _load_file_state(paths)
+                fs["pr_last_run"] = datetime.now(timezone.utc).isoformat()
+                _save_file_state(paths, fs)
+            except Exception as e:
+                logger.error("[sync:%s] PR error: %s", user_id, e, exc_info=True)
+                ss["steps_done"].append(f"personal_records:error:{e}")
+                result["steps_run"].append("personal_records")
+        else:
+            result["steps_skipped"].append({"step": "personal_records", "reason": "aucune nouvelle activité GPS"})
 
         # ── Finalisation ─────────────────────────────────────────────────
         result["duration_s"] = round(time.time() - t_start, 1)
@@ -782,12 +809,20 @@ def trigger_backfill(after_date: str = "2023-01-01", user: dict = Depends(get_cu
                 invalidate_cache(["activities"], user_id=user_id)
 
                 try:
-                    from run_analysis import run_analysis
+                    from run_analysis import run_analysis, update_personal_records
                     buf = io.StringIO()
                     with redirect_stdout(buf):
-                        run_analysis(data_dir=data_dir, config_path=paths.config_json)
+                        run_analysis(data_dir=data_dir, config_path=paths.config_json,
+                                     skip_pr=True)
                     ss["steps_done"].append("analysis")
                     invalidate_cache(["activities", "metrics"], user_id=user_id)
+                    # PR isolé après l'analyse, non bloquant
+                    try:
+                        with redirect_stdout(buf):
+                            update_personal_records(data_dir=data_dir)
+                        ss["steps_done"].append("personal_records")
+                    except Exception as e:
+                        ss["steps_done"].append(f"personal_records:error:{e}")
                 except Exception as e:
                     ss["steps_done"].append(f"analysis:error:{e}")
 
@@ -808,6 +843,58 @@ def trigger_backfill(after_date: str = "2023-01-01", user: dict = Depends(get_cu
 
     _start_sync_thread(_run, name=f"backfill-{user_id}")
     return {"status": "running", "after_date": after_date}
+
+
+@router.post("/sync/personal_records", status_code=202)
+def trigger_personal_records(user: dict = Depends(get_current_user)):
+    """
+    Recalcule les Personal Records sans relancer le pipeline complet.
+    Cache incrémental → coût négligeable si rien de neuf côté GPS.
+    """
+    user_id = user["id"]
+    paths = get_user_paths(user_id)
+    data_dir = paths.base
+    lock = _get_sync_lock(user_id)
+
+    if not lock.acquire(blocking=False):
+        return {"status": "already_running"}
+
+    def _run():
+        ss = _get_sync_state(user_id)
+        prev_status = ss["status"]
+        ss["status"] = "running"
+        ss["started_at"] = datetime.now(timezone.utc).isoformat()
+        ss["finished_at"] = None
+        ss["error"] = None
+        ss["steps_done"] = ["personal_records:start"]
+        t_start = time.time()
+        try:
+            from run_analysis import update_personal_records
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                update_personal_records(data_dir=data_dir)
+            fs = _load_file_state(paths)
+            fs["pr_last_run"] = datetime.now(timezone.utc).isoformat()
+            _save_file_state(paths, fs)
+            ss["steps_done"].append("personal_records")
+            ss["result"] = {
+                "steps_run": ["personal_records"],
+                "duration_s": round(time.time() - t_start, 1),
+            }
+            ss["status"] = "idle"
+        except Exception as e:
+            logger.error("[pr:%s] error: %s", user_id, e, exc_info=True)
+            ss["status"] = "error"
+            ss["error"] = str(e)
+            ss["result"] = {"duration_s": round(time.time() - t_start, 1)}
+        finally:
+            ss["finished_at"] = datetime.now(timezone.utc).isoformat()
+            if prev_status == "running" and ss["status"] != "running":
+                ss["status"] = prev_status
+            lock.release()
+
+    _start_sync_thread(_run, name=f"pr-{user_id}")
+    return {"status": "running"}
 
 
 @router.get("/sync/status")

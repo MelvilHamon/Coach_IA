@@ -393,8 +393,14 @@ def summarize_session(blocks: pd.DataFrame, recoveries: pd.DataFrame) -> list[di
             r = recoveries[recoveries["cluster"] == cluster_id]
             if not r.empty:
                 recup_med = round(r["recup_dur_s"].median())
-                recup_spd = r["mean_speed"].median()
-                recup_str = f", récup ~{recup_med}s @ {recup_spd:.1f} km/h"
+                recup_spd = r["mean_speed"].median()  # km/h
+                if recup_spd and recup_spd > 1.0:
+                    recup_pace_s = 3600.0 / recup_spd
+                    rm = int(recup_pace_s // 60)
+                    rs = int(recup_pace_s % 60)
+                    recup_str = f", récup ~{recup_med}s @ {rm}:{rs:02d} min/km"
+                else:
+                    recup_str = f", récup ~{recup_med}s"
 
         patterns.append({
             "cluster":      cluster_id,

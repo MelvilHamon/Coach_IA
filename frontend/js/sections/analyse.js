@@ -334,7 +334,7 @@ async function loadActivity(actId, target) {
               el('span', { style: { color, fontWeight: '600', minWidth: '55px' } }, `${label}${idx ? ' ' + idx : ''}`),
               el('span', {}, `${b.start_km.toFixed(2)} → ${b.end_km.toFixed(2)} km`),
               el('span', { style: { color: 'var(--ink-mid)' } }, `${m.distance_m}m`),
-              el('span', { style: { fontWeight: '600' } }, `${m.pace_display} /km`),
+              el('span', { style: { fontWeight: '600' } }, isVelo ? m.speed_display : `${m.pace_display} /km`),
               el('span', { style: { color: 'var(--ink-mid)' } }, `${m.duration_display}`),
               m.avg_bpm ? el('span', { style: { color: 'var(--ink-mid)' } }, `${m.avg_bpm} bpm`) : null,
               removeBtn,
@@ -350,10 +350,12 @@ async function loadActivity(actId, target) {
           const metrics = efforts.map(b => computeBlockMetrics(b, distKm, speedRes.speed_kmh, bpmArr));
           const n = efforts.length;
           const avgDist = Math.round(metrics.reduce((s, m) => s + m.distance_m, 0) / n);
+          const avgSpeedKmh = metrics.reduce((s, m) => s + (m.avg_speed_kmh || 0), 0) / n;
           const avgPaceS = metrics.reduce((s, m) => s + m.avg_pace_s, 0) / n;
           const pm = Math.floor(avgPaceS / 60);
           const ps = Math.round(avgPaceS % 60);
           const avgPace = `${pm}:${String(ps).padStart(2, '0')}`;
+          const avgEffortStr = isVelo ? `${avgSpeedKmh.toFixed(1)} km/h` : `${avgPace} /km`;
           const avgBpm = metrics.filter(m => m.avg_bpm).length
             ? Math.round(metrics.reduce((s, m) => s + (m.avg_bpm || 0), 0) / metrics.filter(m => m.avg_bpm).length)
             : null;
@@ -367,20 +369,24 @@ async function loadActivity(actId, target) {
               recovDists.push(Math.round((sortedEfforts[i + 1].start_km - sortedEfforts[i].end_km) * 1000));
             }
             const avgRecov = Math.round(recovDists.reduce((a, b) => a + b, 0) / recovDists.length);
-            // Compute recovery pace
             const recovBlocks = [];
             for (let i = 0; i < sortedEfforts.length - 1; i++) {
               recovBlocks.push({ start_km: sortedEfforts[i].end_km, end_km: sortedEfforts[i + 1].start_km, type: 'recovery' });
             }
             const recovMetrics = recovBlocks.map(b => computeBlockMetrics(b, distKm, speedRes.speed_kmh, bpmArr));
-            const avgRecovPaceS = recovMetrics.reduce((s, m) => s + m.avg_pace_s, 0) / recovMetrics.length;
-            const rpm = Math.floor(avgRecovPaceS / 60);
-            const rps = Math.round(avgRecovPaceS % 60);
-            recovStr = `, récup ~${avgRecov}m @ ${rpm}:${String(rps).padStart(2, '0')} /km`;
+            if (isVelo) {
+              const avgRecovKmh = recovMetrics.reduce((s, m) => s + (m.avg_speed_kmh || 0), 0) / recovMetrics.length;
+              recovStr = `, récup ~${avgRecov}m @ ${avgRecovKmh.toFixed(1)} km/h`;
+            } else {
+              const avgRecovPaceS = recovMetrics.reduce((s, m) => s + m.avg_pace_s, 0) / recovMetrics.length;
+              const rpm = Math.floor(avgRecovPaceS / 60);
+              const rps = Math.round(avgRecovPaceS % 60);
+              recovStr = `, récup ~${avgRecov}m @ ${rpm}:${String(rps).padStart(2, '0')} /km`;
+            }
           }
 
           const bpmStr = avgBpm ? ` (FC ${avgBpm})` : '';
-          const summary = `${n} \u00d7 ~${avgDist}m @ ${avgPace} /km${bpmStr}${recovStr}`;
+          const summary = `${n} \u00d7 ~${avgDist}m @ ${avgEffortStr}${bpmStr}${recovStr}`;
 
           blockSummaryEl.appendChild(el('div', {
             style: {
@@ -512,7 +518,7 @@ async function loadActivity(actId, target) {
               el('span', {}, `${b.start_km.toFixed(2)} → ${b.end_km.toFixed(2)} km`),
               el('span', { style: { color: 'var(--ink-mid)' } }, `${m.distance_m}m`),
               el('span', { style: { fontWeight: '600' } }, `${m.avg_power_w != null ? m.avg_power_w + ' W' : '—'}`),
-              m.pace_display !== '—' ? el('span', { style: { color: 'var(--ink-mid)' } }, `${m.pace_display} /km`) : null,
+              m.pace_display !== '—' ? el('span', { style: { color: 'var(--ink-mid)' } }, isVelo ? m.speed_display : `${m.pace_display} /km`) : null,
               el('span', { style: { color: 'var(--ink-mid)' } }, `${m.duration_display}`),
               m.avg_bpm ? el('span', { style: { color: 'var(--ink-mid)' } }, `${m.avg_bpm} bpm`) : null,
               removeBtn,
@@ -626,7 +632,7 @@ async function loadActivity(actId, target) {
 
       target.appendChild(profileSection);
 
-      if (hasSpeed) plotSpeed(document.getElementById('chart-speed'), speedRes, hasAlt ? altRes : null, { blocks: manualBlocks.filter(b => b.type === 'effort') });
+      if (hasSpeed) plotSpeed(document.getElementById('chart-speed'), speedRes, hasAlt ? altRes : null, { blocks: manualBlocks.filter(b => b.type === 'effort'), unit: isVelo ? 'kmh' : 'pace' });
       if (hasBpm) plotBpm(document.getElementById('chart-bpm'), bpmRes, hasAlt ? altRes : null);
       if (hasPower) plotPower(document.getElementById('chart-power'), powerRes, hasAlt ? altRes : null, { blocks: manualBlocks.filter(b => b.type === 'power_effort') });
       if (hasAlt) plotAltitude(document.getElementById('chart-altitude'), altRes);

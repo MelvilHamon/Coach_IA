@@ -501,22 +501,36 @@ export function plotSpeed(container, data, altData, opts = {}) {
   if (!data.speed_kmh || !data.speed_kmh.length) return;
 
   const dist = data.distance_m.map(d => d / 1000);
+  const unit = opts.unit === 'kmh' ? 'kmh' : 'pace';
 
-  // Convert km/h to min/km. Null out very slow points (stops, walking < 3 km/h).
-  const rawPace = data.speed_kmh.map(v => v > 3.0 ? 60 / v : null);
-
-  // Percentile-based range: robust to outliers
-  const sorted = rawPace.filter(p => p !== null).slice().sort((a, b) => a - b);
-  const pctl = (arr, pct) => arr[Math.floor(arr.length * pct)] || arr[0];
-  const p2  = sorted.length ? pctl(sorted, 0.02) : 3;
-  const p98 = sorted.length ? pctl(sorted, 0.98) : 10;
-
-  const clipMax = p98 + 1.0;
-  const pace = rawPace.map(v => v !== null && v <= clipMax ? v : null);
-
-  const paceMin = Math.floor(p2 * 2) / 2;
-  const paceMax = Math.ceil(Math.min(p98 + 0.5, clipMax) * 2) / 2;
-  const yRange = [paceMax, paceMin];  // reversed axis: [slow, fast]
+  let yArr, yRange, yTitle, hoverTpl;
+  if (unit === 'kmh') {
+    // Speed in km/h directly. Null out very slow points (stops < 1 km/h).
+    yArr = data.speed_kmh.map(v => v > 1.0 ? v : null);
+    const sorted = yArr.filter(v => v !== null).slice().sort((a, b) => a - b);
+    const pctl = (arr, pct) => arr[Math.floor(arr.length * pct)] || arr[0];
+    const p2  = sorted.length ? pctl(sorted, 0.02) : 5;
+    const p98 = sorted.length ? pctl(sorted, 0.98) : 50;
+    const lo = Math.floor(Math.max(0, p2 - 2));
+    const hi = Math.ceil(p98 + 2);
+    yRange = [lo, hi];
+    yTitle = 'km/h';
+    hoverTpl = '%{y:.1f} km/h<extra></extra>';
+  } else {
+    // Convert km/h to min/km. Null out very slow points (stops, walking < 3 km/h).
+    const rawPace = data.speed_kmh.map(v => v > 3.0 ? 60 / v : null);
+    const sorted = rawPace.filter(p => p !== null).slice().sort((a, b) => a - b);
+    const pctl = (arr, pct) => arr[Math.floor(arr.length * pct)] || arr[0];
+    const p2  = sorted.length ? pctl(sorted, 0.02) : 3;
+    const p98 = sorted.length ? pctl(sorted, 0.98) : 10;
+    const clipMax = p98 + 1.0;
+    yArr = rawPace.map(v => v !== null && v <= clipMax ? v : null);
+    const paceMin = Math.floor(p2 * 2) / 2;
+    const paceMax = Math.ceil(Math.min(p98 + 0.5, clipMax) * 2) / 2;
+    yRange = [paceMax, paceMin];  // reversed axis: [slow, fast]
+    yTitle = 'min/km';
+    hoverTpl = '%{y:.1f} min/km<extra></extra>';
+  }
 
   const blocks = opts.blocks || [];
 
@@ -534,29 +548,30 @@ export function plotSpeed(container, data, altData, opts = {}) {
     });
   }
 
-  // Pace main trace (min/km)
   traces.push({
-    x: dist, y: pace,
+    x: dist, y: yArr,
     type: 'scatter', mode: 'lines',
     line: { color: COLORS.accent, width: 1.5 },
     fill: 'tozeroy', fillcolor: 'rgba(37, 99, 235, 0.06)',
     showlegend: false,
     connectgaps: true,
-    hovertemplate: '%{y:.1f} min/km<extra></extra>',
+    hovertemplate: hoverTpl,
   });
+
+  const yaxis = {
+    ...AX,
+    title: { text: yTitle, font: { family: FONT, size: 12, color: COLORS.inkLight } },
+    range: yRange,
+  };
+  if (unit === 'pace') yaxis.autorange = 'reversed';
 
   const layout = {
     ...BASE_LAYOUT, height: 260,
     margin: { l: 52, r: 28, t: 12, b: 36 },
     xaxis: { ...AX, title: { text: 'km', font: { family: FONT, size: 12, color: COLORS.inkLight } } },
-    yaxis: {
-      ...AX,
-      title: { text: 'min/km', font: { family: FONT, size: 12, color: COLORS.inkLight } },
-      autorange: 'reversed',
-      range: yRange,
-    },
+    yaxis,
     shapes: _blockShapes(blocks, yRange),
-    dragmode: false,   // we handle drag ourselves in block mode
+    dragmode: false,
   };
 
   if (altData && altData.altitude_m?.length) {
@@ -568,8 +583,7 @@ export function plotSpeed(container, data, altData, opts = {}) {
 
   safePlot(container, traces, layout, PLOTLY_CONFIG);
 
-  // Store data refs on the container for the drag interaction
-  container._caData = { dist, pace, speedKmh: data.speed_kmh, yRange };
+  container._caData = { dist, pace: yArr, speedKmh: data.speed_kmh, yRange, unit };
 }
 
 /**
@@ -721,6 +735,7 @@ export function computeBlockMetrics(block, distKm, speedKmh, bpm, powerW) {
   const pm = Math.floor(avg_pace_s / 60);
   const ps = Math.round(avg_pace_s % 60);
   const pace_display = avg_speed > 0 ? `${pm}:${String(ps).padStart(2, '0')}` : '—';
+  const speed_display = avg_speed > 0 ? `${(Math.round(avg_speed * 10) / 10).toFixed(1)} km/h` : '—';
   const avg_bpm = bpms.length ? Math.round(bpms.reduce((a, b) => a + b, 0) / bpms.length) : null;
   const avg_power_w = powers.length ? Math.round(powers.reduce((a, b) => a + b, 0) / powers.length) : null;
 
@@ -730,7 +745,7 @@ export function computeBlockMetrics(block, distKm, speedKmh, bpm, powerW) {
   const durSec = Math.round(duration_s % 60);
   const duration_display = `${durMin}:${String(durSec).padStart(2, '0')}`;
 
-  return { distance_m, avg_pace_s, pace_display, avg_speed_kmh: Math.round(avg_speed * 10) / 10, avg_bpm, avg_power_w, duration_s, duration_display };
+  return { distance_m, avg_pace_s, pace_display, speed_display, avg_speed_kmh: Math.round(avg_speed * 10) / 10, avg_bpm, avg_power_w, duration_s, duration_display };
 }
 
 /**

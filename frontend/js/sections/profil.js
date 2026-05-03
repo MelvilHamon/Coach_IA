@@ -62,7 +62,7 @@ export async function renderProfil(container) {
             const speedKmh = (distM / 1000) / (r.time_s / 3600);
             paceOrSpeed = fmt(speedKmh, 1) + ' km/h';
           } else {
-            paceOrSpeed = r.pace + '/km';
+            paceOrSpeed = '—';
           }
         } else {
           paceOrSpeed = r.pace + '/km';
@@ -83,6 +83,47 @@ export async function renderProfil(container) {
 
     prSection.appendChild(collapsible(t('profil.methodPR'), () => methodBody('profil.methodPRBody')));
     container.appendChild(prSection);
+
+    // ── Records de puissance (vélo uniquement) ──
+    if (isVelo) {
+      const powerRecords = allDist.velo_power || {};
+      const powerKeys = Object.keys(powerRecords);
+      const powerSection = el('div', { className: 'ca-section' },
+        sectionTitle(t('profil.prBikePowerTitle') || 'Records de puissance'),
+        el('div', { className: 'ca-metric-explain', style: { marginBottom: '16px' } },
+          t('profil.prBikePowerExplain') || 'Meilleure puissance moyenne soutenue sur des fenêtres de durée fixes (sliding window sur les streams de puissance).',
+        ),
+      );
+
+      if (powerKeys.length) {
+        const powerOrder = ['5s', '1min', '5min', '10min', '20min', '30min', '60min'];
+        const sortedKeys = powerOrder.filter(k => powerRecords[k]);
+        const table = el('table', { className: 'ca-records-table' },
+          el('thead', {},
+            el('tr', {},
+              el('th', {}, t('common.duration') || 'Durée'),
+              el('th', {}, t('common.power') || 'Puissance'),
+              el('th', {}, t('common.date')),
+            ),
+          ),
+        );
+        const tbody = el('tbody');
+        for (const k of sortedKeys) {
+          const r = powerRecords[k];
+          tbody.appendChild(el('tr', {},
+            el('td', {}, k),
+            el('td', { className: 'pr-time' }, fmt(r.power_w, 0) + ' W'),
+            el('td', {}, r.date ? fmtDate(r.date) : '—'),
+          ));
+        }
+        table.appendChild(tbody);
+        powerSection.appendChild(table);
+      } else {
+        powerSection.appendChild(empty(t('profil.noPowerRecords') || 'Aucun record de puissance — connectez un capteur de puissance.'));
+      }
+
+      container.appendChild(powerSection);
+    }
 
     // ── Fitness / Fatigue / Form ──
     const ffSection = el('div', { className: 'ca-section' },

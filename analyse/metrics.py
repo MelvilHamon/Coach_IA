@@ -942,156 +942,358 @@ _PR_DISTANCES_VELO = {
 _PR_DISTANCES = _PR_DISTANCES_RUN
 
 
+def _pr_compute_one_file(args):
+    """
+    Worker pour ThreadPoolExecutor : lit un fichier GPS et calcule ses meilleurs
+    temps sur les distances cibles. Renvoie (key, {act_id, distances{...}}) ou None.
+    """
+    fpath, file_id, source, fname, pr_distances, max_speed_kmh, id_map = args
+    try:
+        from gps_metrics import compute_distances
+        data = storage.read_json(fpath)
+    except Exception:
+        return None
+    if data is None:
+        return None
+    points = data.get("points", data) if isinstance(data, dict) else data
+    if not isinstance(points, list) or len(points) < 2:
+        return None
+    if not any(p.get("time_s") is not None for p in points):
+        return None
+    try:
+        dists = compute_distances(points)
+    except Exception:
+        return None
+    dist_cum = np.cumsum(dists)
+    times = np.array([p.get("time_s", np.nan) for p in points], dtype=float)
+    valid_mask = ~np.isnan(times)
+    if valid_mask.sum() < 2:
+        return None
+    times = np.interp(np.arange(len(times)),
+                      np.where(valid_mask)[0],
+                      times[valid_mask])
+    total_dist = float(dist_cum[-1])
+
+    if source == "garmin":
+        strava_id = id_map.get(file_id)
+        act_id = strava_id or file_id
+    else:
+        act_id = file_id
+
+    per_dist: dict = {}
+    for dist_name, target_m in pr_distances.items():
+        if total_dist < target_m:
+            continue
+        j = 0
+        best_time = None
+        for i in range(len(dist_cum)):
+            while j < len(dist_cum) and (dist_cum[j] - dist_cum[i]) < target_m:
+                j += 1
+            if j >= len(dist_cum):
+                break
+            elapsed = times[j] - times[i]
+            if elapsed > 0 and (best_time is None or elapsed < best_time):
+                best_time = elapsed
+        if best_time is None:
+            continue
+        speed_kmh = (target_m / 1000) / (best_time / 3600)
+        if speed_kmh > max_speed_kmh:
+            continue
+        per_dist[dist_name] = round(float(best_time), 1)
+
+    return (f"{source}:{fname}", {"act_id": act_id, "distances": per_dist})
+
+
 def compute_personal_records(
     gps_dir: str,
     garmin_streams_dir: str,
     activities_df: pd.DataFrame | None = None,
     sport_filter: str = "run",
+    cache_path: str | None = None,
+    max_workers: int = 16,
 ) -> dict:
     """
-    Records personnels via sliding window sur les traces GPS.
+    Records personnels via sliding window sur les traces GPS — incrémental + parallèle.
 
-    Pour chaque distance cible, parcourt tous les fichiers GPS et cherche
-    le meilleur temps sur une fenêtre glissante :
-        pour chaque i, trouver le plus petit j tel que dist_cum[j] - dist_cum[i] >= target_dist
-        temps = time_s[j] - time_s[i]
-        garder le min global.
+    Cache par activité dans `pr_cache_{sport_filter}.json` à côté de `personal_records.json` :
+    on ne recalcule que les fichiers GPS absents du cache, on lit R2 en parallèle.
 
     sport_filter : "run" ou "velo" — filtre les activités et adapte les distances cibles.
+    cache_path   : surcharge l'emplacement du cache (sinon dérivé de gps_dir).
+    max_workers  : taille du pool de threads pour les GETs R2 parallèles.
 
-    Retourne un dict { "400m": { time_s, pace, date, activity_id, source }, ... }
+    Retourne un dict { "400m": { time_s, pace, date, activity_id }, ... }.
     """
-    from gps_metrics import compute_distances
+    from concurrent.futures import ThreadPoolExecutor
     from sport_mapping import get_sport
 
     pr_distances = _PR_DISTANCES_VELO if sport_filter == "velo" else _PR_DISTANCES_RUN
     # Vitesse max plausible : 22 km/h running, 70 km/h vélo
     max_speed_kmh = 70.0 if sport_filter == "velo" else 22.0
 
-    # Map activity dates if available
-    date_map = {}
-    id_map = {}  # garmin_id → strava_id
-    if activities_df is not None:
+    if cache_path is None:
+        parent = os.path.dirname(os.path.abspath(gps_dir.rstrip(os.sep) or gps_dir))
+        cache_path = os.path.join(parent, f"pr_cache_{sport_filter}.json")
+
+    # ── Map dates / IDs activité ─────────────────────────────────────────────
+    date_map: dict = {}
+    id_map: dict = {}
+    sport_ids: set = set()
+    if activities_df is not None and not activities_df.empty:
         for _, row in activities_df.iterrows():
             act_id = str(int(row["ID"]))
             date_map[act_id] = pd.to_datetime(row["Date"]).isoformat()
-
-    # Charger la garmin map pour associer garmin_id → strava_id
-    garmin_map_path = os.path.join(os.path.dirname(garmin_streams_dir), "strava_garmin_map.json")
-    strava_garmin_map = {}
-    if os.path.exists(garmin_map_path):
-        with open(garmin_map_path, encoding="utf-8") as f:
-            strava_garmin_map = json.load(f)
-        for sid, gid in strava_garmin_map.items():
-            id_map[str(gid)] = sid
-
-    # Filtrer les activités par sport
-    sport_ids = set()
-    if activities_df is not None:
         sport_mask = activities_df["Type"].apply(lambda t: get_sport(str(t)) == sport_filter)
         sport_ids = set(activities_df.loc[sport_mask, "ID"].astype(int).astype(str))
 
-    # Collecter tous les fichiers GPS
-    gps_files = []
+    garmin_map_path = os.path.join(os.path.dirname(garmin_streams_dir), "strava_garmin_map.json")
+    if os.path.exists(garmin_map_path):
+        try:
+            with open(garmin_map_path, encoding="utf-8") as f:
+                strava_garmin_map = json.load(f)
+            for sid, gid in strava_garmin_map.items():
+                id_map[str(gid)] = sid
+        except (json.JSONDecodeError, OSError):
+            pass
 
-    # Fichiers data/gps/ — ne garder que les running
-    # Noms possibles : {strava_id}.json (matched Garmin) ou strava_{strava_id}.json (Strava fallback)
+    # ── Charger cache existant ───────────────────────────────────────────────
+    cache: dict = {}
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, encoding="utf-8") as f:
+                cache = json.load(f) or {}
+        except (json.JSONDecodeError, OSError):
+            cache = {}
+
+    # ── Lister les fichiers GPS pertinents ───────────────────────────────────
+    gps_files: list = []  # (full_path, file_id, source, fname)
+
     if storage.isdir(gps_dir):
         for fname in storage.listdir(gps_dir):
-            if fname.endswith(".json"):
-                stem = fname.replace(".json", "")
-                # Extraire le strava_id réel (supprime le prefix "strava_" s'il existe)
-                act_id = stem.replace("strava_", "") if stem.startswith("strava_") else stem
-                if sport_ids and act_id not in sport_ids:
-                    continue
-                gps_files.append((os.path.join(gps_dir, fname), act_id, "gps"))
+            if not fname.endswith(".json"):
+                continue
+            stem = fname.replace(".json", "")
+            act_id = stem.replace("strava_", "") if stem.startswith("strava_") else stem
+            if sport_ids and act_id not in sport_ids:
+                continue
+            gps_files.append((os.path.join(gps_dir, fname), act_id, "gps", fname))
 
-    # Fichiers garmin/streams/ — ne garder que ceux mappés à des activités running
     if storage.isdir(garmin_streams_dir):
         for fname in storage.listdir(garmin_streams_dir):
-            if fname.endswith(".json"):
-                gid = fname.replace(".json", "")
-                strava_id = id_map.get(gid)
-                if sport_ids and strava_id and strava_id not in sport_ids:
-                    continue
-                if sport_ids and not strava_id:
-                    continue
-                gps_files.append((os.path.join(garmin_streams_dir, fname), gid, "garmin"))
-
-    records = {dist_name: None for dist_name in pr_distances}
-
-    for fpath, file_id, source in gps_files:
-        data = storage.read_json(fpath)
-        if data is None:
-            continue
-
-        points = data.get("points", data) if isinstance(data, dict) else data
-        if not isinstance(points, list) or len(points) < 2:
-            continue
-
-        # Vérifier qu'on a time_s
-        if not any(p.get("time_s") is not None for p in points):
-            continue
-
-        dists = compute_distances(points)
-        dist_cum = np.cumsum(dists)
-        times = np.array([p.get("time_s", np.nan) for p in points], dtype=float)
-
-        # Interpoler les time_s manquants
-        valid_mask = ~np.isnan(times)
-        if valid_mask.sum() < 2:
-            continue
-        times = np.interp(np.arange(len(times)),
-                          np.where(valid_mask)[0],
-                          times[valid_mask])
-
-        total_dist = dist_cum[-1]
-
-        # Résoudre l'activity_id pour les dates
-        if source == "garmin":
-            strava_id = id_map.get(file_id)
-            act_id = strava_id or file_id
-        else:
-            act_id = file_id
-
-        act_date = date_map.get(str(act_id), "")
-
-        for dist_name, target_m in pr_distances.items():
-            if total_dist < target_m:
+            if not fname.endswith(".json"):
                 continue
+            gid = fname.replace(".json", "")
+            strava_id = id_map.get(gid)
+            if sport_ids and strava_id and strava_id not in sport_ids:
+                continue
+            if sport_ids and not strava_id:
+                continue
+            gps_files.append((os.path.join(garmin_streams_dir, fname), gid, "garmin", fname))
 
-            # Sliding window
-            j = 0
-            best_time = None
-            for i in range(len(dist_cum)):
-                while j < len(dist_cum) and (dist_cum[j] - dist_cum[i]) < target_m:
-                    j += 1
-                if j >= len(dist_cum):
-                    break
-                elapsed = times[j] - times[i]
-                if elapsed > 0 and (best_time is None or elapsed < best_time):
-                    best_time = elapsed
+    # ── Diff cache / fichiers présents ───────────────────────────────────────
+    current_keys = {f"{src}:{fname}" for (_, _, src, fname) in gps_files}
+    stale_keys = [k for k in list(cache.keys()) if k not in current_keys]
+    for k in stale_keys:
+        cache.pop(k, None)
 
-            if best_time is not None:
-                # Sanity check: speed must be plausible for the sport
-                speed_kmh = (target_m / 1000) / (best_time / 3600)
-                if speed_kmh > max_speed_kmh:
+    new_files = [
+        (p, fid, src, fname, pr_distances, max_speed_kmh, id_map)
+        for (p, fid, src, fname) in gps_files
+        if f"{src}:{fname}" not in cache
+    ]
+
+    # ── Lecture parallèle des nouveaux fichiers ──────────────────────────────
+    if new_files:
+        print(f"  [PR {sport_filter}] {len(new_files)} nouveaux GPS à analyser "
+              f"(cache: {len(cache)}, stale purgés: {len(stale_keys)})")
+        workers = max(1, min(max_workers, len(new_files)))
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            for res in ex.map(_pr_compute_one_file, new_files):
+                if res is None:
                     continue
+                key, entry = res
+                cache[key] = entry
+    elif stale_keys:
+        print(f"  [PR {sport_filter}] cache à jour ({len(cache)} entrées, "
+              f"{len(stale_keys)} stale purgés)")
+    else:
+        print(f"  [PR {sport_filter}] cache à jour ({len(cache)} entrées)")
 
-                current = records[dist_name]
-                if current is None or best_time < current["time_s"]:
-                    pace_s_km = best_time / (target_m / 1000)
-                    pace_min = int(pace_s_km // 60)
-                    pace_sec = int(pace_s_km % 60)
-                    records[dist_name] = {
-                        "time_s": round(best_time, 1),
-                        "pace": f"{pace_min}:{pace_sec:02d}",
-                        "date": act_date,
-                        "activity_id": act_id,
-                    }
+    # ── Persister cache ──────────────────────────────────────────────────────
+    if new_files or stale_keys:
+        try:
+            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+            with open(cache_path, "w", encoding="utf-8") as f:
+                json.dump(cache, f, ensure_ascii=False)
+        except OSError:
+            pass
 
-    # Retirer les None (distances non couvertes)
-    return {k: v for k, v in records.items() if v is not None}
+    # ── Aggrégation : meilleur temps global par distance ─────────────────────
+    records: dict = {}
+    for entry in cache.values():
+        act_id = entry.get("act_id")
+        for dist_name, time_s in (entry.get("distances") or {}).items():
+            if time_s is None:
+                continue
+            target_m = pr_distances.get(dist_name)
+            if target_m is None:
+                continue
+            current = records.get(dist_name)
+            if current is None or time_s < current["time_s"]:
+                pace_s_km = time_s / (target_m / 1000)
+                pace_min = int(pace_s_km // 60)
+                pace_sec = int(pace_s_km % 60)
+                records[dist_name] = {
+                    "time_s": round(float(time_s), 1),
+                    "pace": f"{pace_min}:{pace_sec:02d}",
+                    "date": date_map.get(str(act_id), ""),
+                    "activity_id": act_id,
+                }
+
+    return records
+
+
+# ── Personal Power Records (vélo) ───────────────────────────────────────────
+
+_PR_POWER_DURATIONS = {
+    "5s":    5,
+    "1min":  60,
+    "5min":  300,
+    "10min": 600,
+    "20min": 1200,
+    "30min": 1800,
+    "60min": 3600,
+}
+
+
+def _power_compute_one_file(args):
+    """Worker : meilleur pic de puissance moyenne sur chaque fenêtre cible."""
+    fpath, act_id, durations = args
+    try:
+        df = storage.read_csv(fpath)
+    except Exception:
+        return None
+    if df is None or "power_w" not in df.columns:
+        return None
+    pw = pd.to_numeric(df["power_w"], errors="coerce").fillna(0).to_numpy(dtype=float)
+    if len(pw) < 5 or float(pw.max()) <= 0:
+        return None
+    # Sampling : on suppose 1 Hz (cohérent avec time_s entier croissant).
+    # Si time_s présent et non-régulier, on ré-échantillonne en repère 1 s.
+    if "time_s" in df.columns:
+        ts = pd.to_numeric(df["time_s"], errors="coerce").to_numpy(dtype=float)
+        if np.isfinite(ts).sum() >= 2:
+            t0 = int(np.nanmin(ts))
+            t1 = int(np.nanmax(ts))
+            if t1 - t0 >= 5 and t1 - t0 < 24 * 3600:
+                grid = np.arange(t0, t1 + 1, dtype=float)
+                mask = np.isfinite(ts)
+                pw = np.interp(grid, ts[mask], pw[mask], left=0.0, right=0.0)
+    n = len(pw)
+    cum = np.concatenate(([0.0], np.cumsum(pw)))
+    per_dur: dict = {}
+    for label, w in durations.items():
+        if n < w:
+            continue
+        sums = cum[w:] - cum[:-w]
+        peak = float(sums.max() / w)
+        if peak <= 0:
+            continue
+        per_dur[label] = round(peak, 1)
+    return (str(act_id), {"act_id": str(act_id), "durations": per_dur})
+
+
+def compute_power_records(
+    streams_dir: str,
+    activities_df: "pd.DataFrame | None" = None,
+    sport_filter: str = "velo",
+    cache_path: str | None = None,
+    max_workers: int = 8,
+) -> dict:
+    """
+    Records de puissance par durée (vélo) via fenêtre glissante sur les streams.
+
+    Cache par activité dans `power_pr_cache_{sport}.json`. Retourne
+    `{ "1min": {power_w, date, activity_id}, ... }`.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from sport_mapping import get_sport
+
+    if cache_path is None:
+        parent = os.path.dirname(os.path.abspath(streams_dir.rstrip(os.sep) or streams_dir))
+        cache_path = os.path.join(parent, f"power_pr_cache_{sport_filter}.json")
+
+    date_map: dict = {}
+    sport_ids: set = set()
+    if activities_df is not None and not activities_df.empty:
+        for _, row in activities_df.iterrows():
+            act_id = str(int(row["ID"]))
+            date_map[act_id] = pd.to_datetime(row["Date"]).isoformat()
+        sport_mask = activities_df["Type"].apply(lambda t: get_sport(str(t)) == sport_filter)
+        sport_ids = set(activities_df.loc[sport_mask, "ID"].astype(int).astype(str))
+
+    cache: dict = {}
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, encoding="utf-8") as f:
+                cache = json.load(f) or {}
+        except (json.JSONDecodeError, OSError):
+            cache = {}
+
+    if not storage.isdir(streams_dir):
+        return {}
+
+    stream_files: list = []
+    for fname in storage.listdir(streams_dir):
+        if not fname.endswith(".csv"):
+            continue
+        act_id = fname.replace(".csv", "")
+        if sport_ids and act_id not in sport_ids:
+            continue
+        stream_files.append((os.path.join(streams_dir, fname), act_id))
+
+    current_keys = {act_id for (_, act_id) in stream_files}
+    stale = [k for k in list(cache.keys()) if k not in current_keys]
+    for k in stale:
+        cache.pop(k, None)
+
+    new_files = [(p, aid, _PR_POWER_DURATIONS) for (p, aid) in stream_files if aid not in cache]
+
+    if new_files:
+        print(f"  [PR power {sport_filter}] {len(new_files)} streams à analyser "
+              f"(cache: {len(cache)}, stale purgés: {len(stale)})")
+        workers = max(1, min(max_workers, len(new_files)))
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            for res in ex.map(_power_compute_one_file, new_files):
+                if res is None:
+                    continue
+                key, entry = res
+                cache[key] = entry
+    else:
+        print(f"  [PR power {sport_filter}] cache à jour ({len(cache)} entrées)")
+
+    if new_files or stale:
+        try:
+            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+            with open(cache_path, "w", encoding="utf-8") as f:
+                json.dump(cache, f, ensure_ascii=False)
+        except OSError:
+            pass
+
+    records: dict = {}
+    for entry in cache.values():
+        act_id = entry.get("act_id")
+        for label, watts in (entry.get("durations") or {}).items():
+            if watts is None or label not in _PR_POWER_DURATIONS:
+                continue
+            current = records.get(label)
+            if current is None or watts > current["power_w"]:
+                records[label] = {
+                    "power_w": round(float(watts), 1),
+                    "date": date_map.get(str(act_id), ""),
+                    "activity_id": act_id,
+                }
+    return records
 
 
 # ── Gradient Adjusted Pace ───────────────────────────────────────────────────

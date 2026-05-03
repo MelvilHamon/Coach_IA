@@ -64,6 +64,7 @@ from metrics import (
     compute_fitness_fatigue,
     compute_monotony_strain,
     compute_personal_records,
+    compute_power_records,
     acwr_label,
     load_config,
 )
@@ -199,7 +200,64 @@ def _compute_activity_metrics(row: pd.Series, config: dict, streams_dir: str = N
 
 # ── Pipeline principale ───────────────────────────────────────────────────────
 
-def run_analysis(force: bool = False, data_dir: str = None, config_path: str = None) -> None:
+def update_personal_records(data_dir: str | None = None) -> dict:
+    """
+    Recalcule les Personal Records (run + vélo) à partir du CSV enrichi et
+    des traces GPS. Utilise un cache incrémental par activité (voir
+    metrics.compute_personal_records) → coût ≈ O(nouvelles activités GPS).
+
+    Peut être appelée indépendamment du pipeline d'analyse pour ne pas bloquer
+    le sync sur les utilisateurs ayant des milliers de traces GPS.
+    """
+    _data_dir = data_dir or os.path.join(_ROOT, "data")
+    _enriched = os.path.join(_data_dir, "activities_enriched.csv")
+    _csv_path = os.path.join(_data_dir, "mes_activites_strava.csv")
+    _gps_dir = os.path.join(_data_dir, "gps")
+    _garmin_streams = os.path.join(_data_dir, "garmin", "streams")
+    _streams_dir = os.path.join(_data_dir, "streams")
+    _pr_path = os.path.join(_data_dir, "personal_records.json")
+
+    src_csv = _enriched if os.path.exists(_enriched) else _csv_path
+    if not os.path.exists(src_csv) or os.path.getsize(src_csv) == 0:
+        return {"error": "no_activities", "run": {}, "velo": {}}
+
+    df = pd.read_csv(src_csv)
+    if "Date" in df.columns:
+        df["Date"] = pd.to_datetime(df["Date"], utc=True, errors="coerce")
+
+    pr_run = {}
+    pr_velo = {}
+    try:
+        pr_run = compute_personal_records(_gps_dir, _garmin_streams,
+                                          activities_df=df, sport_filter="run")
+    except Exception as e:
+        print(f"  [PR run] erreur ignorée : {e}")
+    try:
+        pr_velo = compute_personal_records(_gps_dir, _garmin_streams,
+                                           activities_df=df, sport_filter="velo")
+    except Exception as e:
+        print(f"  [PR velo] erreur ignorée : {e}")
+
+    pr_velo_power = {}
+    try:
+        pr_velo_power = compute_power_records(_streams_dir,
+                                              activities_df=df, sport_filter="velo")
+    except Exception as e:
+        print(f"  [PR power velo] erreur ignorée : {e}")
+
+    pr = {"run": pr_run, "velo": pr_velo, "velo_power": pr_velo_power}
+    try:
+        os.makedirs(os.path.dirname(_pr_path), exist_ok=True)
+        with open(_pr_path, "w", encoding="utf-8") as f:
+            json.dump(pr, f, indent=2, ensure_ascii=False)
+    except OSError as e:
+        print(f"  [PR] échec sauvegarde {_pr_path} : {e}")
+
+    return pr
+
+
+def run_analysis(force: bool = False, data_dir: str = None, config_path: str = None,
+                 skip_pr: bool = False) -> None:
     """
     Pipeline d'analyse enrichie.
 
@@ -442,17 +500,38 @@ def run_analysis(force: bool = False, data_dir: str = None, config_path: str = N
     print(f"\nFichier enrichi sauvegardé : {_enriched}")
 
     # ── Personal Records (sliding window GPS) ──────────────────────────────────
-    print("Calcul des records personnels (sliding window GPS)…")
-    pr_run = compute_personal_records(_gps_dir, _garmin_streams, activities_df=df, sport_filter="run")
-    pr_velo = compute_personal_records(_gps_dir, _garmin_streams, activities_df=df, sport_filter="velo")
-    pr = {"run": pr_run, "velo": pr_velo}
-    os.makedirs(os.path.dirname(_pr_path), exist_ok=True)
-    with open(_pr_path, "w", encoding="utf-8") as f:
-        json.dump(pr, f, indent=2, ensure_ascii=False)
-    pr_run_dists = ", ".join(f"{k}: {v['pace']}/km" for k, v in pr_run.items())
-    pr_velo_dists = ", ".join(f"{k}: {v['pace']}/km" for k, v in pr_velo.items())
-    print(f"  Records run   : {pr_run_dists or 'aucun'}")
-    print(f"  Records vélo  : {pr_velo_dists or 'aucun'}")
+    if skip_pr:
+        print("Personal Records : skip (étape déléguée hors run_analysis).")
+    else:
+        print("Calcul des records personnels (sliding window GPS, incrémental)…")
+        pr_run, pr_velo = {}, {}
+        try:
+            pr_run = compute_personal_records(_gps_dir, _garmin_streams,
+                                              activities_df=df, sport_filter="run")
+        except Exception as e:
+            print(f"  [PR run] erreur ignorée : {e}")
+        try:
+            pr_velo = compute_personal_records(_gps_dir, _garmin_streams,
+                                               activities_df=df, sport_filter="velo")
+        except Exception as e:
+            print(f"  [PR velo] erreur ignorée : {e}")
+        pr_velo_power = {}
+        try:
+            pr_velo_power = compute_power_records(_streams_dir,
+                                                  activities_df=df, sport_filter="velo")
+        except Exception as e:
+            print(f"  [PR power velo] erreur ignorée : {e}")
+        pr = {"run": pr_run, "velo": pr_velo, "velo_power": pr_velo_power}
+        try:
+            os.makedirs(os.path.dirname(_pr_path), exist_ok=True)
+            with open(_pr_path, "w", encoding="utf-8") as f:
+                json.dump(pr, f, indent=2, ensure_ascii=False)
+        except OSError as e:
+            print(f"  [PR] échec sauvegarde {_pr_path} : {e}")
+        pr_run_dists = ", ".join(f"{k}: {v['pace']}/km" for k, v in pr_run.items())
+        pr_velo_dists = ", ".join(f"{k}: {v['pace']}/km" for k, v in pr_velo.items())
+        print(f"  Records run   : {pr_run_dists or 'aucun'}")
+        print(f"  Records vélo  : {pr_velo_dists or 'aucun'}")
 
     # ── Mise à jour sync_state.json ───────────────────────────────────────────
     state = {}
