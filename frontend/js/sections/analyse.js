@@ -191,10 +191,13 @@ async function loadActivity(actId, target) {
     if (allGear.length) {
       const gearRow = el('div', { style: { marginTop: '12px', display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' } });
 
-      for (const slot of ['shoes', 'watch']) {
+      const slots = isVelo ? ['bike', 'watch'] : ['shoes', 'watch'];
+      for (const slot of slots) {
         const slotGear = allGear.filter(g => g.type === slot && !g.retired);
         if (!slotGear.length) continue;
-        const label = slot === 'shoes' ? t('analyse.shoes') : t('analyse.watch');
+        const label = slot === 'shoes' ? t('analyse.shoes')
+                    : slot === 'bike'  ? t('analyse.bike')
+                    : t('analyse.watch');
         const select = el('select', { className: 'ca-select', style: { fontSize: '11px', minWidth: '120px' } });
         select.appendChild(el('option', { value: '' }, `— ${label} —`));
         for (const g of slotGear) {

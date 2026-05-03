@@ -26,7 +26,7 @@ router = APIRouter(prefix="/api/gear", tags=["gear"])
 
 class GearCreate(BaseModel):
     name: str
-    type: str                          # "shoes" | "watch"
+    type: str                          # "shoes" | "watch" | "bike"
     brand: Optional[str] = None
     acquired_date: Optional[str] = None  # YYYY-MM-DD
     retired: bool = False
@@ -94,8 +94,9 @@ def _save_assignments(user_id: str, data: dict):
 def _compute_gear_km(user_id: str, gear_items: list[dict]) -> dict:
     """Returns {gear_id: total_km}.
 
-    For shoes: if there is exactly one non-retired shoe, all activities
-    since its acquired_date count automatically (no manual assignment needed).
+    For shoes (run) and bikes (cycling): if there is exactly one non-retired
+    item of that type, the matching activities since its acquired_date count
+    automatically (no manual assignment needed).
     """
     assignments = _load_assignments(user_id)
     df = load_activities(user_id)
@@ -105,9 +106,22 @@ def _compute_gear_km(user_id: str, gear_items: list[dict]) -> dict:
     if df.empty:
         return km_by_gear
 
-    # Detect sole active shoe for auto-attribution
+    # Sport per row (uses normalized 'sport' column if present, else 'Type')
+    def _row_sport(row):
+        s = row.get("sport") if "sport" in row else None
+        if isinstance(s, str) and s:
+            return s
+        try:
+            from sport_mapping import get_sport
+            return get_sport(str(row.get("Type", "")))
+        except Exception:
+            return None
+
+    # Sole active shoe / bike for auto-attribution
     active_shoes = [g for g in gear_items if g["type"] == "shoes" and not g.get("retired")]
+    active_bikes = [g for g in gear_items if g["type"] == "bike" and not g.get("retired")]
     sole_shoe = active_shoes[0] if len(active_shoes) == 1 else None
+    sole_bike = active_bikes[0] if len(active_bikes) == 1 else None
 
     # Build set of activity IDs explicitly assigned to each gear
     assigned_acts = {}  # {gear_id: set(act_id)}
@@ -127,24 +141,26 @@ def _compute_gear_km(user_id: str, gear_items: list[dict]) -> dict:
                 km_by_gear[gear_id] += float(dist)
                 assigned_acts.setdefault(gear_id, set()).add(act_id)
 
-    # Auto-attribute unassigned activities to sole shoe since acquired_date
-    if sole_shoe:
-        shoe_id = sole_shoe["id"]
-        already = assigned_acts.get(shoe_id, set())
+    # Auto-attribute unassigned matching-sport activities to sole gear
+    def _auto_attribute(sole_item, slot, sport_target):
+        if not sole_item:
+            return
+        gid = sole_item["id"]
+        already = assigned_acts.get(gid, set())
         cutoff = None
-        if sole_shoe.get("acquired_date"):
+        if sole_item.get("acquired_date"):
             try:
-                cutoff = pd.Timestamp(sole_shoe["acquired_date"], tz="UTC")
+                cutoff = pd.Timestamp(sole_item["acquired_date"], tz="UTC")
             except Exception:
                 cutoff = None
-
         for _, row in df.iterrows():
             act_id = int(row["ID"])
             if act_id in already:
                 continue
-            # Skip if this activity has a different shoe assigned
+            if sport_target is not None and _row_sport(row) != sport_target:
+                continue
             act_assign = assignments.get(str(act_id), {})
-            if "shoes" in act_assign and act_assign["shoes"] != shoe_id:
+            if slot in act_assign and act_assign[slot] != gid:
                 continue
             dist = row.get("Distance (km)")
             if pd.isna(dist) or dist is None:
@@ -155,7 +171,10 @@ def _compute_gear_km(user_id: str, gear_items: list[dict]) -> dict:
                     act_date = act_date.tz_localize("UTC")
                 if act_date < cutoff:
                     continue
-            km_by_gear[shoe_id] += float(dist)
+            km_by_gear[gid] += float(dist)
+
+    _auto_attribute(sole_shoe, "shoes", "run")
+    _auto_attribute(sole_bike, "bike", "velo")
 
     return km_by_gear
 
@@ -237,8 +256,8 @@ def assign_gear(activity_id: str, slot: str, body: GearAssign, user: dict = Depe
 
     slot: "shoes" ou "watch"
     """
-    if slot not in ("shoes", "watch"):
-        return {"ok": False, "error": "slot must be 'shoes' or 'watch'"}
+    if slot not in ("shoes", "watch", "bike"):
+        return {"ok": False, "error": "slot must be 'shoes', 'watch' or 'bike'"}
 
     assignments = _load_assignments(user["id"])
 

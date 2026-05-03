@@ -332,8 +332,11 @@ export async function renderSettings(container) {
 
 const GEAR_TYPES = () => [
   { value: 'shoes', label: t('settings.shoes') },
+  { value: 'bike',  label: t('settings.bike') },
   { value: 'watch', label: t('settings.watch') },
 ];
+
+const GEAR_ICONS = { shoes: '\u{1F45F}', bike: '\u{1F6B4}', watch: '\u{231A}' };
 
 async function renderGearSection(container) {
   container.innerHTML = '';
@@ -448,7 +451,7 @@ async function renderGearSection(container) {
     },
       el('div', { style: { flex: '1', minWidth: '0' } },
         el('div', { style: { fontWeight: 500 } },
-          el('span', {}, `${typeLabel === 'Chaussures' ? '\u{1F45F}' : '\u{231A}'} `),
+          el('span', {}, `${GEAR_ICONS[g.type] || '\u{1F4E6}'} `),
           el('span', {}, g.name),
           retiredBadge,
         ),
