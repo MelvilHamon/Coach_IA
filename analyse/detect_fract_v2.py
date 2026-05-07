@@ -285,6 +285,62 @@ def cluster_blocks(
 
 
 # ──────────────────────────────────────────────
+# 5.5 TRIM DES "BONUS" APRÈS COUPURE STRUCTURELLE
+# ──────────────────────────────────────────────
+
+def _trim_bonus_reps(
+    blocks: pd.DataFrame,
+    outlier_factor: float = 2.5,
+    min_outlier_s: float  = 180.0,
+    min_group_reps: int   = 3,
+) -> pd.DataFrame:
+    """
+    Détecte une coupure structurelle dans un cluster (récup ≥ outlier_factor ×
+    médiane des récups du cluster ET ≥ min_outlier_s en absolu) suivie d'un
+    petit groupe (< min_group_reps blocs). Ces blocs « bonus » sont retirés
+    du cluster (cluster=-1) pour ne pas polluer la validation/résumé.
+
+    Les vrais fractionnés mixtes (ex: 5×400 puis 5×1000 séparés par une
+    transition longue) ne sont pas affectés : les deux sous-groupes ont
+    chacun ≥ min_group_reps répétitions et restent dans leur cluster.
+    """
+    if blocks.empty or "cluster" not in blocks.columns:
+        return blocks
+
+    blocks = blocks.copy().sort_values("start").reset_index(drop=True)
+
+    for cluster_id in blocks["cluster"].unique():
+        if cluster_id == -1:
+            continue
+        cluster_idxs = blocks.index[blocks["cluster"] == cluster_id].tolist()
+        if len(cluster_idxs) < 4:
+            continue
+
+        recups = [
+            blocks.loc[cluster_idxs[i + 1], "start"]
+            - blocks.loc[cluster_idxs[i], "end"]
+            for i in range(len(cluster_idxs) - 1)
+        ]
+        median_recup = float(np.median(recups))
+        if median_recup <= 0:
+            continue
+
+        # Parcours depuis la fin : on cherche une coupure tardive isolant
+        # un petit groupe (typique d'un "bonus" après fin de séance).
+        for i in range(len(recups) - 1, -1, -1):
+            r = recups[i]
+            if r >= outlier_factor * median_recup and r >= min_outlier_s:
+                bonus_count = len(cluster_idxs) - (i + 1)
+                if 0 < bonus_count < min_group_reps:
+                    blocks.loc[cluster_idxs[i + 1:], "cluster"] = -1
+                # Qu'on ait coupé ou non, on s'arrête à la première coupure
+                # tardive trouvée pour ce cluster.
+                break
+
+    return blocks
+
+
+# ──────────────────────────────────────────────
 # 6. DÉTECTION DES RÉCUPÉRATIONS
 # ──────────────────────────────────────────────
 
@@ -889,6 +945,7 @@ def analyze_fractionne(
         return _no_frac
 
     blocks_clustered = cluster_blocks(blocks, eps=dbscan_eps)
+    blocks_clustered = _trim_bonus_reps(blocks_clustered)
     recoveries       = extract_recoveries(df, blocks_clustered)
     patterns         = summarize_session(blocks_clustered, recoveries)
     stype            = classify_session_type(patterns)
