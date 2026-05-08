@@ -23,7 +23,7 @@ import pandas as pd
 from scipy.ndimage import gaussian_filter1d
 from sklearn.mixture import GaussianMixture
 
-from detect_fract_v2 import cluster_blocks, extract_recoveries
+from detect_fract_v2 import cluster_blocks, extract_recoveries, _read_stream_csv
 
 _ROOT        = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _CONFIG_PATH = os.path.join(_ROOT, "config.json")
@@ -429,7 +429,7 @@ def analyze_fractionne_velo(activity_path: str,
     """
     cfg = config if config is not None else _load_velo_det_cfg()
 
-    df = pd.read_csv(activity_path)
+    df = _read_stream_csv(activity_path)
     df = preprocess_velo(df)
 
     mode       = "power" if has_power(df) else "speed"

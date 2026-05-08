@@ -18,9 +18,29 @@ Architecture :
 
 import json
 import os
+import sys
 
 import numpy as np
 import pandas as pd
+
+# storage : abstraction R2/local pour la lecture des streams. En prod les
+# streams vivent dans R2 (cf. api/storage.py).
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+try:
+    from api import storage as _storage
+except Exception:
+    _storage = None
+
+
+def _read_stream_csv(path: str) -> pd.DataFrame:
+    """Lecture d'un stream CSV : R2 si disponible, sinon filesystem local."""
+    if _storage is not None:
+        df = _storage.read_csv(path)
+        if df is not None:
+            return df
+    return pd.read_csv(path)
 from scipy.ndimage import gaussian_filter1d
 from scipy.stats import spearmanr
 from sklearn.mixture import GaussianMixture
@@ -905,7 +925,7 @@ def analyze_fractionne(
     if max_recup_cv is None:
         max_recup_cv = det_cfg.get("max_recup_cv", 0.45)
 
-    df = pd.read_csv(activity_path)
+    df = _read_stream_csv(activity_path)
     df = preprocess(df, sigma=sigma)
 
     threshold = find_effort_threshold_gmm(df["speed_smooth"].values)
@@ -1042,7 +1062,7 @@ def format_allure(min_per_km: float) -> str:
 
 def load_stream(path: str) -> pd.DataFrame:
     """Charge et préprocesse directement."""
-    df = pd.read_csv(path)
+    df = _read_stream_csv(path)
     return preprocess(df)
 
 

@@ -39,6 +39,14 @@ from detect_fract_v2 import analyze_fractionne
 from detect_fract_velo import analyze_fractionne_velo
 from sport_mapping import get_sport
 
+# storage : abstraction R2/local. Les streams vivent dans R2 en prod, sur le
+# filesystem local en dev. os.path.exists ne sait pas voir R2, d'où l'usage
+# de storage.exists pour les checks de présence de stream.
+try:
+    from api import storage as _storage
+except Exception:
+    _storage = None
+
 
 # Types d'activité Strava qui ne sont pas de la course à pied ni du vélo
 _NON_SPORT_TYPES = {"Soccer", "Workout", "WeightTraining", "Yoga", "Crossfit",
@@ -139,7 +147,7 @@ def detect_session_type(
         _max_blk_cv = det_cfg.get("max_block_cv_run", None)
     _max_recup_cv = det_cfg.get("max_recup_cv", None)
 
-    if stream_path and os.path.exists(stream_path):
+    if stream_path and (_storage.exists(stream_path) if _storage else os.path.exists(stream_path)):
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", RuntimeWarning)
@@ -215,7 +223,7 @@ def _classify_velo(
     recov_max_hrp = velo_cfg.get("recovery_max_hr_pct", 0.65)
 
     # Intervalles vélo (détection via stream)
-    if stream_path and os.path.exists(stream_path):
+    if stream_path and (_storage.exists(stream_path) if _storage else os.path.exists(stream_path)):
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", RuntimeWarning)
