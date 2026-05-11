@@ -743,6 +743,98 @@ def _validate_fractionne(
 
 
 # ──────────────────────────────────────────────
+# 7.55 GATE D'INTENSITÉ SESSION (filtre rétroactif)
+# ──────────────────────────────────────────────
+
+def _check_session_intensity(
+    df: pd.DataFrame,
+    session_type: str,
+    blocks: pd.DataFrame,
+    hr_max: float = 0.0,
+    athlete_speed_profile: Optional[dict] = None,
+) -> bool:
+    """
+    Filtre rétroactif : un run avec pauses (feu, photo) peut faire émerger une
+    structure pseudo-fractionnée sans que la séance soit globalement intense.
+    On exige que la FC moyenne OU l'allure moyenne de la session atteigne un
+    palier cohérent avec le type détecté.
+
+    Why: les faux positifs observés ont une FC moyenne et une allure moyenne
+    d'endurance — les "blocs" rapides sont juste l'allure normale entre deux
+    pauses, pas un effort fractionné.
+
+    OU logique (pas ET) : couvre les runs sans FC et les athlètes qui ne
+    poussent pas en FC mais clairement en allure.
+
+    Bypass : structure forte (≥ 8 reps, ou ≥ 5 reps + cv_core < 0.05).
+
+    Retourne True si l'intensité est cohérente OU si aucune donnée disponible.
+    """
+    profile = athlete_speed_profile or {}
+
+    if session_type == "fractionné court":
+        hr_pct_min = 0.82
+        spd_key    = "p80_kmh"
+    elif session_type in ("fractionné moyen", "mixte"):
+        hr_pct_min = 0.80
+        spd_key    = "p75_kmh"
+    else:  # long, tempo / allure, pyramide *
+        # 0.82 (et non 0.78) car un tempo continu à allure seuil hit
+        # naturellement 78-81% FCmax sans être fractionné. À ce niveau de durée
+        # de bloc, l'écart d'intensité entre vrai fractionné et tempo continu
+        # se joue surtout sur la FC moyenne (effort soutenu > effort intermittent).
+        hr_pct_min = 0.82
+        spd_key    = "p70_kmh"
+
+    # Mesures structurelles (pour bypass éventuel)
+    max_reps  = 0
+    cv_core   = None
+    if not blocks.empty and "cluster" in blocks.columns and "speed_cv_core" in blocks.columns:
+        valid = blocks[blocks["cluster"] != -1]
+        if not valid.empty:
+            sizes    = valid.groupby("cluster").size()
+            max_reps = int(sizes.max())
+            best     = sizes.idxmax()
+            cv_core  = float(valid[valid["cluster"] == best]["speed_cv_core"].median())
+
+    # Adaptation profil lent : seuils légèrement abaissés
+    athlete_mean = float(profile.get("mean_kmh", 0.0))
+    if 0 < athlete_mean < 10.8:
+        hr_pct_min -= 0.03
+
+    hr_ok = None
+    if hr_max > 0 and "bpm_smooth" in df.columns:
+        bpm_valid = df["bpm_smooth"].dropna()
+        bpm_valid = bpm_valid[bpm_valid > 30]
+        if len(bpm_valid) > 0:
+            hr_mean = float(bpm_valid.mean())
+            hr_ok   = (hr_mean / hr_max) >= hr_pct_min
+
+    spd_ok = None
+    spd_min = float(profile.get(spd_key, 0.0))
+    if spd_min > 0:
+        spd_mean = float(df["speed_smooth"].mean())
+        spd_ok   = spd_mean >= spd_min
+
+    # Aucune donnée d'intensité → on ne filtre pas
+    if hr_ok is None and spd_ok is None:
+        return True
+
+    # Au moins l'un des deux signaux dit "intense" → OK
+    if hr_ok or spd_ok:
+        return True
+
+    # FC ET allure disent endurance : la séance n'est pas globalement intense.
+    # On ne bypass que sur structure extrême (vrai fractionné où le signal
+    # structurel est sans ambiguïté). Un endurance avec pauses peut générer
+    # 5-7 blocs réguliers (cv_core ~0.05) — donc seuils relevés.
+    if cv_core is not None:
+        if max_reps >= 10 or (max_reps >= 8 and cv_core < 0.04):
+            return True
+    return False
+
+
+# ──────────────────────────────────────────────
 # 7.6 DÉTECTION DU FRACTIONNÉ EN PYRAMIDE
 # ──────────────────────────────────────────────
 
@@ -884,6 +976,8 @@ def analyze_fractionne(
     min_ef_vs_mean: float     = 1.03,
     min_effort_speed_kmh: float = 0.0,         # 0.0 = inactif ; fourni par session_classifier
     athlete_mean_speed_kmh: float = 0.0,       # vitesse moyenne athlète pour adaptation seuils
+    hr_max: float             = 0.0,           # 0.0 = inactif ; pour gate d'intensité session
+    athlete_speed_profile: Optional[dict] = None,  # {p70_kmh, p75_kmh, p80_kmh, mean_kmh}
     sport_type: str           = "Run",
     verbose: bool             = True,
 ) -> dict:
@@ -994,6 +1088,20 @@ def analyze_fractionne(
             # pourrait être du fractionné en montagne (montées répétées).
             # Flaggé pour traitement futur, classé en "indéterminé" pour l'instant.
             mountain_candidate = True
+
+    # Gate d'intensité session : invalidation rétroactive si la FC moyenne ET
+    # l'allure moyenne sont d'endurance pour ce type de fractionné détecté.
+    # Filtre principalement les runs avec pauses (feux, photos) qui font émerger
+    # une pseudo-structure sans intensité réelle.
+    if is_frac:
+        if not _check_session_intensity(
+            df, stype, blocks_clustered,
+            hr_max=hr_max,
+            athlete_speed_profile=athlete_speed_profile,
+        ):
+            is_frac = False
+            stype   = "indéterminé"
+            pyramid = None
 
     if verbose:
         _print_summary(activity_path, threshold, patterns, stype, is_frac,

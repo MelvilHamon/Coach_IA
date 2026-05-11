@@ -156,6 +156,8 @@ def detect_session_type(
                     sport_type=sport_type,
                     min_effort_speed_kmh=min_effort_spd,
                     athlete_mean_speed_kmh=athlete_mean_spd,
+                    hr_max=float(hr_max),
+                    athlete_speed_profile=speed_profile,
                     max_block_cv=_max_blk_cv,
                     max_recup_cv=_max_recup_cv,
                 )
