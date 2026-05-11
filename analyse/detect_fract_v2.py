@@ -824,13 +824,21 @@ def _check_session_intensity(
     if hr_ok or spd_ok:
         return True
 
-    # FC ET allure disent endurance : la séance n'est pas globalement intense.
-    # On ne bypass que sur structure extrême (vrai fractionné où le signal
-    # structurel est sans ambiguïté). Un endurance avec pauses peut générer
-    # 5-7 blocs réguliers (cv_core ~0.05) — donc seuils relevés.
+    # Aucun signal ne dit "intense". On bypass sur la structure, avec un seuil
+    # qui dépend de la disponibilité de la FC :
+    # - FC disponible : la FC est un signal fiable ; si elle dit endurance,
+    #   on n'invalide que sur structure extrême (≥10 reps ou ≥8 + cv_core<0.04).
+    #   Un endurance avec pauses peut produire 5-7 blocs cv_core ~0.05.
+    # - FC indisponible (vieilles activités sans cardio) : on doit se fier
+    #   davantage à la structure. Seuil aligné sur l'ancienne logique pour
+    #   ne pas perdre les vrais fractionnés sans FC.
     if cv_core is not None:
-        if max_reps >= 10 or (max_reps >= 8 and cv_core < 0.04):
-            return True
+        if hr_ok is None:
+            if max_reps >= 8 or (max_reps >= 5 and cv_core < 0.06):
+                return True
+        else:
+            if max_reps >= 10 or (max_reps >= 8 and cv_core < 0.04):
+                return True
     return False
 
 
