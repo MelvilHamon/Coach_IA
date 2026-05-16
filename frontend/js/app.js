@@ -10,7 +10,7 @@ import { renderOverview } from './sections/overview.js';
 import { renderHistory } from './sections/history.js';
 import { renderProfil } from './sections/profil.js';
 import { renderProgression } from './sections/progression.js';
-import { renderCharge } from './sections/charge.js';
+import { renderExplication } from './sections/explication.js';
 import { renderAnalyse } from './sections/analyse.js';
 import { renderCalendrier } from './sections/calendrier.js';
 import { renderSettings } from './sections/settings.js';
@@ -22,7 +22,7 @@ const SECTIONS = {
   history:     renderHistory,
   profil:      renderProfil,
   progression: renderProgression,
-  charge:      renderCharge,
+  explication: renderExplication,
   calendrier:  renderCalendrier,
   analyse:     renderAnalyse,
   settings:    renderSettings,

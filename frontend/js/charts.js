@@ -22,10 +22,10 @@ const COLORS = {
 const FONT = "'JetBrains Mono', monospace";
 
 const BASE_LAYOUT = {
-  paper_bgcolor: COLORS.card,
-  plot_bgcolor:  COLORS.card,
+  paper_bgcolor: 'rgba(0,0,0,0)',
+  plot_bgcolor:  'rgba(0,0,0,0)',
   font: { family: FONT, color: COLORS.inkMid, size: 12 },
-  margin: { l: 52, r: 28, t: 28, b: 44 },
+  margin: { l: 48, r: 16, t: 16, b: 36 },
   showlegend: false,
   hovermode: 'x unified',
   hoverlabel: {
@@ -36,12 +36,10 @@ const BASE_LAYOUT = {
 };
 
 const AX = {
-  gridcolor: COLORS.grid,
-  gridwidth: 1,
   showline:  false,
-  showgrid:  true,
+  showgrid:  false,
   zeroline:  false,
-  tickfont: { family: FONT, size: 12, color: COLORS.inkLight },
+  tickfont: { family: FONT, size: 11, color: COLORS.inkLight },
 };
 
 const PLOTLY_CONFIG = { displayModeBar: false, responsive: true };
@@ -77,58 +75,85 @@ const STYPE_PALETTE = [
 
 // ── Volume + ACWR (overview) ────────────────────────────────────────────────
 
-export function plotVolume(container, data) {
+function _fmtStravaWeek(iso) {
+  const d = new Date(iso);
+  const months = ['janv', 'févr', 'mars', 'avr', 'mai', 'juin', 'juil', 'août', 'sept', 'oct', 'nov', 'déc'];
+  return `${d.getDate()} ${months[d.getMonth()]}`;
+}
+
+export function plotVolume(container, data, opts = {}) {
   const weeks = data.weeks || [];
   if (!weeks.length) return;
 
-  const x    = weeks.map(w => w.week);
-  const km   = weeks.map(w => w.total_km);
-  const acwr = weeks.map(w => w.acwr);
+  const x       = weeks.map(w => w.week);
+  const xLabels = weeks.map(w => _fmtStravaWeek(w.week));
+  const km      = weeks.map(w => w.total_km);
+  const acwr    = weeks.map(w => w.acwr);
 
   const traces = [
     {
-      x, y: km,
+      x: xLabels, y: km,
       type: 'bar',
       name: t('charts.kmPerWeek'),
-      marker: { color: COLORS.dark, opacity: 0.12, line: { color: COLORS.dark, width: 1 } },
+      marker: { color: '#4A4744', opacity: 0.9, line: { width: 0 } },
+      width: 0.55,
       yaxis: 'y',
+      hovertemplate: '<b>%{y:.1f} km</b><extra></extra>',
     },
     {
-      x, y: acwr,
+      x: xLabels, y: acwr,
       type: 'scatter', mode: 'lines+markers',
-      name: 'ACWR',
+      name: 'Indice de surcharge',
       line:   { color: COLORS.accent, width: 2 },
-      marker: { size: 4, color: COLORS.accent },
+      marker: { size: 6, color: COLORS.accent },
       yaxis: 'y2',
+      hovertemplate: '<b>%{y:.2f}</b><extra></extra>',
     },
   ];
 
   const layout = {
     ...BASE_LAYOUT,
-    height: 340,
+    height: 300,
+    margin: { l: 40, r: 40, t: 24, b: 40 },
     showlegend: true,
     legend: {
       bgcolor: 'rgba(0,0,0,0)', borderwidth: 0,
-      font: { family: FONT, size: 11, color: COLORS.inkLight },
-      x: 0, y: 1.08, orientation: 'h',
+      font: { family: FONT, size: 11, color: COLORS.inkMid },
+      x: 0, y: 1.12, orientation: 'h',
     },
-    xaxis: { ...AX },
+    xaxis: {
+      ...AX,
+      type: 'category',
+      tickangle: 0,
+      tickfont: { family: FONT, size: 10, color: COLORS.inkLight },
+    },
     yaxis: {
       ...AX,
-      title: { text: 'km', font: { family: FONT, size: 12, color: COLORS.inkLight } },
+      ticksuffix: ' km',
+      tickfont: { family: FONT, size: 10, color: COLORS.inkLight },
     },
     yaxis2: {
       ...AX,
-      title: { text: 'ACWR', font: { family: FONT, size: 12, color: COLORS.inkLight } },
       overlaying: 'y', side: 'right', range: [0, 2.5],
+      tickfont: { family: FONT, size: 10, color: COLORS.inkLight },
     },
     shapes: [
-      { type: 'line', yref: 'y2', y0: 1.3, y1: 1.3, xref: 'paper', x0: 0, x1: 1, line: { dash: 'dot', color: COLORS.warning, width: 1 }, opacity: 0.5 },
-      { type: 'line', yref: 'y2', y0: 1.5, y1: 1.5, xref: 'paper', x0: 0, x1: 1, line: { dash: 'dot', color: COLORS.danger, width: 1 }, opacity: 0.5 },
+      { type: 'line', yref: 'y2', y0: 1.3, y1: 1.3, xref: 'paper', x0: 0, x1: 1, line: { dash: 'dot', color: COLORS.warning, width: 1 }, opacity: 0.4 },
+      { type: 'line', yref: 'y2', y0: 1.5, y1: 1.5, xref: 'paper', x0: 0, x1: 1, line: { dash: 'dot', color: COLORS.danger, width: 1 }, opacity: 0.4 },
     ],
   };
 
   safePlot(container, traces, layout, PLOTLY_CONFIG);
+
+  if (opts.onWeekClick && typeof container.on === 'function') {
+    container.on('plotly_click', (ev) => {
+      const p = ev?.points?.[0];
+      if (!p) return;
+      const iso = weeks[p.pointIndex]?.week;
+      if (iso) opts.onWeekClick(iso);
+    });
+    container.style.cursor = 'pointer';
+  }
 }
 
 // ── ACWR 90 jours (charge) ──────────────────────────────────────────────────
@@ -457,8 +482,8 @@ export function plotZones(container, zones) {
 
   const layout = {
     ...BASE_LAYOUT,
-    height: 195,
-    margin: { l: 0, r: 0, t: 8, b: 8 },
+    height: 220,
+    margin: { l: 24, r: 24, t: 16, b: 16 },
     showlegend: true,
     legend: { font: { family: FONT, size: 11, color: COLORS.inkMid }, bgcolor: 'rgba(0,0,0,0)' },
   };
@@ -821,7 +846,7 @@ export function plotBpm(container, bpmData, altData) {
 
   const layout = {
     ...BASE_LAYOUT, height: 260,
-    margin: { l: 52, r: 28, t: 12, b: 36 },
+    margin: { l: 64, r: 48, t: 16, b: 40 },
     xaxis: { ...AX, title: { text: 'km', font: { family: FONT, size: 12, color: COLORS.inkLight } } },
     yaxis: {
       ...AX,
@@ -994,10 +1019,10 @@ export function plotPolarizedBar(container, pctEF, pctSeuil) {
   ];
 
   const layout = {
-    ...BASE_LAYOUT, height: 76,
+    ...BASE_LAYOUT, height: 110,
     barmode: 'stack',
     showlegend: false,
-    margin: { l: 0, r: 0, t: 0, b: 0 },
+    margin: { l: 0, r: 0, t: 0, b: 28 },
     xaxis: { ...AX, range: [0, 100], showgrid: false, showticklabels: false, zeroline: false },
     yaxis: { ...AX, showgrid: false, showticklabels: false },
     shapes: [{
@@ -1005,11 +1030,23 @@ export function plotPolarizedBar(container, pctEF, pctSeuil) {
       x0: 80, x1: 80, y0: -0.5, y1: 0.5,
       line: { color: COLORS.ink, width: 2, dash: 'dot' },
     }],
-    annotations: [{
-      x: 80, y: 0.5, yref: 'paper', yanchor: 'bottom',
-      text: '80%', showarrow: false,
-      font: { family: FONT, size: 11, color: COLORS.inkMid },
-    }],
+    annotations: [
+      {
+        x: 80, y: 0.5, yref: 'paper', yanchor: 'bottom',
+        text: '80%', showarrow: false,
+        font: { family: FONT, size: 11, color: COLORS.inkMid },
+      },
+      {
+        x: pctEF / 2, y: -0.6, xanchor: 'center', yanchor: 'top',
+        text: 'Z1 + Z2 + Z3', showarrow: false,
+        font: { family: FONT, size: 12, color: COLORS.success },
+      },
+      {
+        x: pctEF + pctSeuil / 2, y: -0.6, xanchor: 'center', yanchor: 'top',
+        text: 'Z4 + Z5', showarrow: false,
+        font: { family: FONT, size: 12, color: COLORS.danger },
+      },
+    ],
   };
 
   safePlot(container, traces, layout, PLOTLY_CONFIG);

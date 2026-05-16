@@ -4,11 +4,11 @@
 
 import { api } from '../api.js';
 import { el, sectionTitle, loading, empty, collapsible, methodBody } from '../components.js';
-import { plotPace, plotEf, plotVo2, plotSpeedTrend } from '../charts.js';
+import { plotEf, plotVo2, plotSpeedTrend } from '../charts.js';
 import { getCurrentSport } from '../state.js';
 import { t } from '../i18n.js';
 
-let _activeTab = 'pace';
+let _activeTab = 'ef';
 
 export async function renderProgression(container) {
   container.innerHTML = '';
@@ -22,7 +22,6 @@ export async function renderProgression(container) {
         { id: 'ef',    label: t('progression.ef') },
       ]
     : [
-        { id: 'pace', label: t('progression.pace') },
         { id: 'ef',   label: t('progression.ef') },
         { id: 'vo2',  label: t('progression.vo2') },
       ];
@@ -56,26 +55,7 @@ export async function renderProgression(container) {
     content.appendChild(loading());
 
     try {
-      if (tabId === 'pace') {
-        const data = await api.chartPace(sport);
-        content.innerHTML = '';
-        if (!data.series?.length) {
-          content.appendChild(empty(t('progression.noPace')));
-          return;
-        }
-        const note = el('div', { className: 'ca-metric-explain', style: { marginBottom: '16px' } },
-          t('progression.paceExplain'),
-        );
-        content.appendChild(note);
-        const chartEl = el('div', { className: 'ca-chart-card' },
-          el('div', { id: 'chart-pace', className: 'ca-chart-container' }),
-        );
-        content.appendChild(chartEl);
-        plotPace(document.getElementById('chart-pace'), data);
-
-        content.appendChild(collapsible(t('progression.methodPace'), () => methodBody('progression.methodPaceBody')));
-
-      } else if (tabId === 'speed') {
+      if (tabId === 'speed') {
         const data = await api.chartSpeed(sport);
         content.innerHTML = '';
         if (!data.series?.length) {

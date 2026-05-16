@@ -311,17 +311,81 @@ html, body {
   max-width: 240px;
 }
 
+/* ── Glossaire métriques ── */
+
+.ca-glossary-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 24px;
+  max-width: 1200px;
+}
+
+.ca-metric-glossary {
+  padding: 20px 0 0;
+  border-top: 1px solid var(--border);
+}
+
+.ca-metric-glossary-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.ca-metric-glossary-name {
+  font-family: var(--font-serif);
+  font-size: 20px;
+  color: var(--ink);
+  letter-spacing: 0.01em;
+}
+
+.ca-metric-glossary-alias {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-light);
+}
+
+.ca-metric-glossary-short {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--ink);
+  margin-bottom: 8px;
+}
+
+.ca-metric-glossary-long {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-mid);
+  line-height: 1.55;
+}
+
+/* ── Barre 80/20 (encadrée, centrée) ── */
+
+.ca-polarized-bar-card {
+  max-width: 720px;
+  margin: 0 auto 16px;
+  padding: 4px 0;
+  background: transparent;
+}
+
 /* ── Charts ── */
 
 .ca-chart-card {
-  background: var(--bg-card);
-  padding: 28px 32px;
+  background: transparent;
+  padding: 8px 0 0;
   border-radius: var(--radius);
 }
 
 .ca-chart-container {
   width: 100%;
-  min-height: 400px;
+  min-height: 360px;
+}
+
+.ca-chart-container .main-svg,
+.ca-chart-container .bg {
+  background: transparent !important;
 }
 
 /* ── Distribution bars ── */
