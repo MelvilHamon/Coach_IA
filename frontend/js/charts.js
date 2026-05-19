@@ -36,7 +36,9 @@ const BASE_LAYOUT = {
 };
 
 const AX = {
-  showline:  false,
+  showline:  true,
+  linecolor: COLORS.inkLight,
+  linewidth: 1,
   showgrid:  false,
   zeroline:  false,
   tickfont: { family: FONT, size: 11, color: COLORS.inkLight },
@@ -472,10 +474,13 @@ export function plotZones(container, zones) {
   const labels = Object.keys(zones).map(z => z.toUpperCase());
   const values = Object.values(zones).map(z => z.pct);
   const colors = ['#9CA3AF', '#22D3EE', '#22C55E', '#F97316', '#EF4444'];
+  const text = values.map(v => v > 0 ? `${Math.round(v)}%` : '');
 
   const traces = [{
-    labels, values,
+    labels, values, text,
     type: 'pie', hole: 0.6,
+    textinfo: 'text',
+    hovertemplate: '%{label}: %{value:.1f}%<extra></extra>',
     marker: { colors: colors.slice(0, labels.length), line: { color: COLORS.card, width: 2 } },
     textfont: { family: FONT, size: 11, color: COLORS.ink },
   }];

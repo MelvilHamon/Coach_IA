@@ -8,7 +8,7 @@ import {
   acwrStatus, badge, weeklyReviewBox,
 } from '../components.js';
 import { plotVolume, plotPolarizedBar } from '../charts.js';
-import { getCurrentSport } from '../state.js';
+import { getCurrentSport, setPendingActivityId } from '../state.js';
 import { t, getLang } from '../i18n.js';
 
 
@@ -78,6 +78,7 @@ function _buildPolarizedBlock(activities, weekMonday) {
       const ef = z1 + z2 + z3;
       const seuil = z4 + z5;
       rows.push({
+        id: a.id,
         nom: a.nom || '—',
         date: a.date,
         type: a.session_type || '',
@@ -119,7 +120,14 @@ function _buildPolarizedBlock(activities, weekMonday) {
 
   const tbody = el('tbody');
   for (const r of rows) {
-    tbody.appendChild(el('tr', {},
+    tbody.appendChild(el('tr', {
+      style: { cursor: 'pointer' },
+      title: t('history.seeAnalyse'),
+      onClick: () => {
+        setPendingActivityId(r.id);
+        window.location.hash = 'analyse';
+      },
+    },
       el('td', {}, (r.nom || '').slice(0, 28)),
       el('td', { className: 'dim' }, fmtDate(r.date)),
       el('td', {}, badge(r.type)),
