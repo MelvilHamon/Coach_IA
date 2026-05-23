@@ -46,6 +46,7 @@ def _resolve_paths(data_dir: str | None = None, config_path: str | None = None) 
     else:
         cfg = _DEFAULT_CONFIG
     return {
+        "data_dir": d,
         "enriched": os.path.join(d, "activities_enriched.csv"),
         "memoire": os.path.join(d, "memoire.txt"),
         "reviews_dir": os.path.join(d, "reviews"),
@@ -136,6 +137,140 @@ def _load_splits(activity_id: int, streams_dir: str) -> str:
     return ""
 
 
+# ── Stadium helpers ──────────────────────────────────────────────────────────
+
+
+def _mmss(seconds) -> str:
+    if seconds is None or (isinstance(seconds, float) and np.isnan(seconds)):
+        return "N/A"
+    s = int(round(float(seconds)))
+    return f"{s // 60}:{s % 60:02d}"
+
+
+def _load_track_pr(data_dir: str) -> dict:
+    path = os.path.join(data_dir, "track_pr.json")
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _build_stadium_block(row: pd.Series, track_pr: dict) -> str:
+    """Bloc de contexte piste si l'activite a un match stade.
+    Retourne chaine vide sinon."""
+    stadium_name = row.get("stadium_name")
+    if not stadium_name or (isinstance(stadium_name, float) and np.isnan(stadium_name)):
+        return ""
+
+    track_length = row.get("track_length_m")
+    n_laps       = row.get("n_laps")
+    best_lap     = row.get("best_lap_s")
+    mean_lap     = row.get("mean_lap_s")
+    track_cv     = row.get("track_cv")
+    stadium_id   = row.get("stadium_id")
+    activity_id  = row.get("ID")
+
+    lines = [
+        f"  Stade         : {stadium_name} — piste {_fmt(track_length, ' m', decimals=0)}",
+    ]
+    if n_laps and not (isinstance(n_laps, float) and np.isnan(n_laps)):
+        cv_pct = f"CV={track_cv * 100:.0f}%" if track_cv else "CV=N/A"
+        lines.append(
+            f"  Tours         : {int(n_laps)} (best {_mmss(best_lap)}, "
+            f"moyen {_mmss(mean_lap)}, {cv_pct})"
+        )
+
+    # Contexte historique via track_pr
+    pr = track_pr.get(str(stadium_id)) if stadium_id else None
+    if pr:
+        n_sessions = pr.get("n_sessions", 0)
+        pr_lap_s = pr.get("pr_lap_s")
+        pr_lap_session = pr.get("pr_lap_session")
+        is_pr_today = (
+            pr_lap_session and str(pr_lap_session) == str(activity_id)
+            and best_lap is not None and not (isinstance(best_lap, float) and np.isnan(best_lap))
+            and abs(float(best_lap) - float(pr_lap_s)) < 0.5
+        )
+        pr_5_s = pr.get("pr_5_consec_s")
+        pr_5_session = pr.get("pr_5_consec_session")
+        is_pr5_today = (
+            pr_5_session and str(pr_5_session) == str(activity_id)
+        )
+
+        lines.append(
+            f"  Sur ce stade  : {n_sessions} seance(s), PR tour {_mmss(pr_lap_s)}"
+            + (f", PR 5 tours {_mmss(pr_5_s)}" if pr_5_s else "")
+        )
+
+        # Comparaison avec la moyenne des 5 dernieres seances precedentes
+        progression = pr.get("progression") or []
+        prior = [p for p in progression if str(p.get("strava_id")) != str(activity_id)]
+        prior = prior[-5:]
+        if prior and best_lap and not (isinstance(best_lap, float) and np.isnan(best_lap)):
+            prev_bests = [p["best_lap_s"] for p in prior if p.get("best_lap_s")]
+            if prev_bests:
+                avg_prev = sum(prev_bests) / len(prev_bests)
+                delta = float(best_lap) - avg_prev
+                sign = "+" if delta > 0 else ""
+                direction = "plus lent" if delta > 0 else "plus rapide"
+                lines.append(
+                    f"  Vs historique : best tour {sign}{delta:.1f}s vs moyenne "
+                    f"des {len(prev_bests)} dernieres seances ({direction})"
+                )
+
+        if is_pr_today:
+            lines.append("  *** PR BATTU sur 1 tour aujourd'hui ***")
+        if is_pr5_today:
+            lines.append("  *** PR BATTU sur 5 tours consecutifs aujourd'hui ***")
+
+    return "Contexte piste :\n" + "\n".join(lines)
+
+
+def _build_weekly_stadium_block(df_week: pd.DataFrame, track_pr: dict) -> str:
+    """Resume les seances piste de la semaine avec comparaison historique."""
+    track_sessions = df_week[df_week["stadium_name"].notna()] if "stadium_name" in df_week.columns else df_week.iloc[0:0]
+    if track_sessions.empty:
+        return ""
+
+    lines = []
+    pr_battus = []
+    for _, r in track_sessions.iterrows():
+        d = pd.to_datetime(r["Date"]).strftime("%a %d/%m")
+        best_lap = r.get("best_lap_s")
+        n_laps = r.get("n_laps")
+        n_laps_int = int(n_laps) if n_laps and not (isinstance(n_laps, float) and np.isnan(n_laps)) else 0
+        sid = r.get("stadium_id")
+
+        pr = track_pr.get(str(sid)) if sid and not (isinstance(sid, float) and np.isnan(sid)) else None
+        delta_str = ""
+        if pr and best_lap and not (isinstance(best_lap, float) and np.isnan(best_lap)):
+            prior = [p for p in (pr.get("progression") or []) if str(p.get("strava_id")) != str(r.get("ID"))]
+            prior = prior[-5:]
+            prev_bests = [p["best_lap_s"] for p in prior if p.get("best_lap_s")]
+            if prev_bests:
+                avg_prev = sum(prev_bests) / len(prev_bests)
+                delta = float(best_lap) - avg_prev
+                sign = "+" if delta > 0 else ""
+                delta_str = f", best {sign}{delta:.1f}s vs avg {len(prev_bests)} dern."
+            # Detection PR
+            if pr.get("pr_lap_session") and str(pr["pr_lap_session"]) == str(r.get("ID")):
+                pr_battus.append(f"{d} : PR tour {_mmss(pr['pr_lap_s'])}")
+            for n in [5, 10]:
+                key_sid = f"pr_{n}_consec_session"
+                if pr.get(key_sid) and str(pr[key_sid]) == str(r.get("ID")):
+                    pr_battus.append(f"{d} : PR {n} tours {_mmss(pr[f'pr_{n}_consec_s'])}")
+
+        lines.append(
+            f"  - {d} — {r['stadium_name']} ({_fmt(r.get('track_length_m'), ' m', decimals=0)}) : "
+            f"{n_laps_int} tours, best {_mmss(best_lap)}{delta_str}"
+        )
+
+    block = "Seances piste de la semaine :\n" + "\n".join(lines)
+    if pr_battus:
+        block += "\n  *** PR battus cette semaine ***\n" + "\n".join(f"    - {p}" for p in pr_battus)
+    return block
+
+
 # ── System prompt ────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """\
@@ -151,6 +286,10 @@ Tu maitrises les metriques suivantes et les utilises dans ton analyse :
 - Efficiency Factor : rapport vitesse/FC (progression = EF qui monte)
 - Decouplage aerobie : derive FC (> 5% = endurance aerobie insuffisante)
 - Zones FC (Z1-Z5) : repartition de l'effort
+- Contexte piste (si fourni) : seance en stade d'athletisme, avec longueur de piste,
+  splits par tour, regularite (CV), et comparaison aux records de l'athlete sur CE
+  meme stade. Les conditions y sont stables -> c'est le contexte le plus fiable pour
+  juger la progression pure. Si un PR est battu, le souligner explicitement.
 
 IMPORTANT : Tu reponds UNIQUEMENT avec un objet JSON valide (pas de markdown,
 pas de texte avant/apres). Le JSON doit suivre exactement cette structure :
@@ -170,7 +309,9 @@ Regles pour les champs :
 - charge : toujours preciser les grandeurs comparees (ex: "volume en hausse de 30% par rapport a la semaine precedente (45 km vs 35 km)"). Ne jamais ecrire un pourcentage sans dire de quoi il s'agit ni donner les valeurs absolues.
 - tags : 1-3 tags parmi ["bonne_seance", "surcharge", "sous_entrainement", "progression",
   "fatigue", "recuperation_ok", "decouplage_eleve", "monotonie", "pic_charge",
-  "seance_cle", "endurance_solide", "intensite_elevee"]
+  "seance_cle", "endurance_solide", "intensite_elevee", "seance_piste", "pr_battu"]
+  -> "seance_piste" si l'activite a un contexte piste
+  -> "pr_battu" si un PR a ete battu sur ce stade (tour ou N tours consecutifs)
 - Toutes les valeurs sont en francais
 """
 
@@ -179,7 +320,8 @@ Regles pour les champs :
 
 
 def _build_prompt(row: pd.Series, context: pd.DataFrame, memoire: str,
-                  feedback: dict | None = None, splits_str: str = "") -> str:
+                  feedback: dict | None = None, splits_str: str = "",
+                  track_pr: dict | None = None) -> str:
     # Allure
     pace_raw = row.get("Allure (min/km)")
     if pace_raw and not (isinstance(pace_raw, float) and np.isnan(pace_raw)):
@@ -339,6 +481,7 @@ Activites recentes (14 derniers jours) :
 {recent_str}
 {feedback_str}
 {f"\\n{splits_str}" if splits_str else ""}
+{(chr(10) + _build_stadium_block(row, track_pr or {})) if _build_stadium_block(row, track_pr or {}) else ""}
 ---
 Reponds en francais avec un JSON valide.
 """.strip()
@@ -403,7 +546,9 @@ def generate_review(
 
     config = _load_config(paths["config"])
     llm_cfg = config.get("llm", {})
-    prompt = _build_prompt(row, window, memoire, feedback=feedback, splits_str=splits_str)
+    track_pr = _load_track_pr(paths["data_dir"])
+    prompt = _build_prompt(row, window, memoire, feedback=feedback,
+                           splits_str=splits_str, track_pr=track_pr)
 
     client, model = get_llm_client(llm_cfg)
     resp = client.chat.completions.create(
@@ -615,7 +760,7 @@ Indicateurs de forme (fin de semaine) :
 
 Repartition types :
 {type_counts}
-
+{(chr(10) + _build_weekly_stadium_block(df_week, _load_track_pr(paths["data_dir"]))) if _build_weekly_stadium_block(df_week, _load_track_pr(paths["data_dir"])) else ""}
 ---
 Reponds en francais avec un JSON valide.
 """.strip()
