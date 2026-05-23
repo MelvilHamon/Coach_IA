@@ -35,9 +35,42 @@ _ANALYSE_DIR = os.path.dirname(os.path.abspath(__file__))
 if _ANALYSE_DIR not in sys.path:
     sys.path.insert(0, _ANALYSE_DIR)
 
-from detect_fract_v2 import analyze_fractionne
+from detect_fract_v2 import analyze_fractionne, _read_stream_csv
 from detect_fract_velo import analyze_fractionne_velo
 from sport_mapping import get_sport
+
+
+def _compute_active_avgs(
+    stream_path: str,
+    walk_threshold_kmh: float = 6.0,
+) -> tuple[float, float | None, float] | None:
+    """
+    Recalcule allure moyenne et FC moyenne en excluant les samples de marche/arrêt
+    (speed < walk_threshold_kmh). Sert à corriger les classifications biaisées
+    par des pauses marche au milieu d'une séance.
+
+    Retourne (avg_spd_active_kmh, avg_hr_active_or_None, active_ratio) ou None
+    si stream illisible. active_ratio = part du temps total au-dessus du seuil.
+    """
+    try:
+        df = _read_stream_csv(stream_path)
+        if "speed_kmh" not in df.columns or len(df) < 30:
+            return None
+        spd = df["speed_kmh"].ffill().values
+        mask = spd >= walk_threshold_kmh
+        active_ratio = float(mask.mean()) if len(mask) else 0.0
+        if not mask.any():
+            return (0.0, None, 0.0)
+        avg_spd_active = float(spd[mask].mean())
+        avg_hr_active: float | None = None
+        if "bpm" in df.columns:
+            bpm = df["bpm"].ffill().values
+            valid = mask & np.isfinite(bpm) & (bpm > 0)
+            if valid.any():
+                avg_hr_active = float(bpm[valid].mean())
+        return (avg_spd_active, avg_hr_active, active_ratio)
+    except Exception:
+        return None
 
 # storage : abstraction R2/local. Les streams vivent dans R2 en prod, sur le
 # filesystem local en dev. os.path.exists ne sait pas voir R2, d'où l'usage
@@ -166,6 +199,20 @@ def detect_session_type(
         except Exception:
             pass  # en cas d'erreur de parsing, on continue avec les règles suivantes
 
+    # Allure et FC "actives" : moyennes calculées sur le temps en mouvement
+    # (speed >= 6 km/h), pour corriger les séances diluées par de la marche
+    # ou des arrêts (FC et allure moyennes brutes sous-estiment alors l'effort).
+    # Garde-fou : ne s'applique que si >= 60% du temps est actif.
+    avg_spd_active = None
+    avg_hr_active = None
+    active_ratio = 1.0
+    if stream_path and (_storage.exists(stream_path) if _storage else os.path.exists(stream_path)):
+        active = _compute_active_avgs(stream_path)
+        if active is not None and active[2] >= 0.60:
+            avg_spd_active = active[0]
+            avg_hr_active = active[1]
+            active_ratio = active[2]
+
     # ── 5. Tempo/seuil basé sur l'allure (avant récup pour éviter les
     #      faux positifs récup à FC basse chez les profils à hr_max élevé ou
     #      mal calibré). Rattrape les cas où la FC moyenne ne franchit pas
@@ -176,6 +223,12 @@ def detect_session_type(
         avg_spd_kmh = (distance_km / duration_min) * 60.0
         if avg_spd_kmh >= p80_kmh:
             return "tempo / seuil"
+        if avg_spd_active is not None:
+            # Tolérance de 2% uniquement si >5% du temps a été en marche/arrêt :
+            # signal qu'il y a un vrai biais à corriger. Sinon p80 strict.
+            tol = 0.98 if active_ratio < 0.95 else 1.0
+            if avg_spd_active >= p80_kmh * tol:
+                return "tempo / seuil"
 
     # ── 6. Récupération active ────────────────────────────────────────────────
     if hr_mean and duration_min > 0:
@@ -184,6 +237,12 @@ def detect_session_type(
     elif duration_min > 0 and duration_min < recov_max_dur and distance_km < 6:
         # Pas de FC mais courte sortie légère
         return "récupération active"
+
+    # ── 6bis. Tempo/seuil par FC active : on teste AVANT sortie longue
+    #         car une FC moyenne tirée vers le bas par des phases de marche
+    #         doit pouvoir basculer en tempo. La FC active est un signal fort.
+    if avg_hr_active is not None and avg_hr_active / hr_max >= 0.80:
+        return "tempo / seuil"
 
     # ── 7. Sortie longue ──────────────────────────────────────────────────────
     if distance_km >= long_run_km:
