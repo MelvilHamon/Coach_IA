@@ -35,7 +35,7 @@ _ANALYSE_DIR = os.path.dirname(os.path.abspath(__file__))
 if _ANALYSE_DIR not in sys.path:
     sys.path.insert(0, _ANALYSE_DIR)
 
-from detect_fract_v2 import analyze_fractionne, _read_stream_csv
+from detect_fract_v2 import analyze_fractionne, _read_stream_csv, detect_sprints
 from detect_fract_velo import analyze_fractionne_velo
 from sport_mapping import get_sport
 
@@ -198,6 +198,17 @@ def detect_session_type(
                 return result.get("session_type", "fractionné")
         except Exception:
             pass  # en cas d'erreur de parsing, on continue avec les règles suivantes
+
+        # Fallback sprint : pics courts (2-30s) très violents que le pipeline
+        # fractionné rate à cause de min_effort_s=15s et du lissage sigma=3.
+        # Pas appliqué au trail (faux positifs sur descentes).
+        if sport_type != "TrailRun":
+            try:
+                sprint_res = detect_sprints(stream_path)
+                if sprint_res.get("is_sprint"):
+                    return sprint_res.get("session_type", "fractionné sprint")
+            except Exception:
+                pass
 
     # Allure et FC "actives" : moyennes calculées sur le temps en mouvement
     # (speed >= 6 km/h), pour corriger les séances diluées par de la marche

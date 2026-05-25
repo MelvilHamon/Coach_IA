@@ -969,6 +969,96 @@ def detect_pyramid(
 
 
 # ──────────────────────────────────────────────
+# 7.7 DÉTECTION DE SÉANCE SPRINT (pics courts et violents)
+# ──────────────────────────────────────────────
+
+def detect_sprints(
+    activity_path: str,
+    walk_threshold_kmh: float = 6.0,
+    sigma: float              = 1.0,
+    min_spike_s: float        = 2.0,
+    max_spike_s: float        = 30.0,
+    speed_factor: float       = 1.40,
+    peak_factor: float        = 1.50,
+    min_spikes: int           = 3,
+    min_mean_peak_ratio: float = 1.70,
+) -> dict:
+    """
+    Détecte une séance de sprints (pics courts et violents) que le pipeline
+    fractionné standard rate parce que ses min_effort_s=15s coupe les blocs
+    courts et son lissage sigma=3 écrase les pics de quelques secondes.
+
+    Approche :
+    - lissage léger (sigma=1, ~3s) pour conserver les pics
+    - seuil dynamique = max(speed_factor × vitesse_moy_active, p95)
+    - un sprint = plateau de min_spike_s à max_spike_s au-dessus du seuil
+    - validation : ≥ min_spikes ET au moins un pic ≥ peak_factor × moy active
+
+    Retourne {is_sprint, n_sprints, max_speed_kmh, mean_peak_kmh, threshold_kmh}.
+    """
+    df = _read_stream_csv(activity_path)
+    if "speed_kmh" not in df.columns or len(df) < 30:
+        return {"is_sprint": False, "n_sprints": 0}
+
+    df = df.sort_values("time_s").reset_index(drop=True)
+    v_raw = df["speed_kmh"].ffill().values.astype(float)
+    t     = df["time_s"].values.astype(float)
+    v_sm  = gaussian_filter1d(v_raw, sigma=sigma)
+
+    active = v_raw[v_raw >= walk_threshold_kmh]
+    if len(active) < 30:
+        return {"is_sprint": False, "n_sprints": 0}
+    mean_active = float(active.mean())
+
+    threshold = max(speed_factor * mean_active, float(np.percentile(v_raw, 95)))
+
+    mask = v_sm > threshold
+    spikes = []
+    i = 0
+    while i < len(v_sm):
+        if mask[i]:
+            j = i
+            while j < len(v_sm) and mask[j]:
+                j += 1
+            dur  = float(t[j - 1] - t[i])
+            peak = float(v_raw[i:j].max())
+            if min_spike_s <= dur <= max_spike_s and peak >= peak_factor * mean_active:
+                spikes.append({"start": float(t[i]), "end": float(t[j - 1]),
+                               "duration_s": dur, "peak_kmh": peak,
+                               "mean_kmh": float(v_sm[i:j].mean())})
+            i = j
+        else:
+            i += 1
+
+    if len(spikes) < min_spikes:
+        return {"is_sprint": False, "n_sprints": len(spikes),
+                "threshold_kmh": round(threshold, 2)}
+
+    max_peak = max(s["peak_kmh"] for s in spikes)
+    mean_peak = float(np.mean([s["mean_kmh"] for s in spikes]))
+
+    # Garde-fou anti faux positif : une sortie d'endurance peut contenir 3-4
+    # accélérations légères (fin de run, traversées). Un vrai sprint dépasse
+    # nettement la vitesse de croisière — on exige un ratio mean_peak/active
+    # élevé pour distinguer "effort violent" d'"accélération modérée".
+    if mean_peak / max(mean_active, 1e-6) < min_mean_peak_ratio:
+        return {"is_sprint": False, "n_sprints": len(spikes),
+                "threshold_kmh": round(threshold, 2),
+                "mean_peak_ratio": round(mean_peak / max(mean_active, 1e-6), 2)}
+
+    return {
+        "is_sprint":     True,
+        "session_type":  "fractionné sprint",
+        "n_sprints":     len(spikes),
+        "threshold_kmh": round(threshold, 2),
+        "max_speed_kmh": round(max_peak, 2),
+        "mean_peak_kmh": round(mean_peak, 2),
+        "mean_active_kmh": round(mean_active, 2),
+        "spikes":        spikes,
+    }
+
+
+# ──────────────────────────────────────────────
 # 8. PIPELINE COMPLÈTE
 # ──────────────────────────────────────────────
 
