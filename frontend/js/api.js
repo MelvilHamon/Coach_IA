@@ -68,6 +68,10 @@ export const api = {
   // Records
   records: () => _fetch('/api/records'),
 
+  // Stadiums
+  stadiums: () => _fetch('/api/stadiums'),
+  stadiumSessions: (id) => _fetch(`/api/stadiums/${id}/sessions`),
+
   // Reviews
   review:         (id) => _fetch(`/api/reviews/${id}`),
   generateReview: (id) => _fetch(`/api/reviews/${id}`, { method: 'POST' }),

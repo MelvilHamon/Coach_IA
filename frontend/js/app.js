@@ -14,6 +14,7 @@ import { renderExplication } from './sections/explication.js';
 import { renderAnalyse } from './sections/analyse.js';
 import { renderCalendrier } from './sections/calendrier.js';
 import { renderSettings } from './sections/settings.js';
+import { renderStadiums } from './sections/stadiums.js';
 
 // ── Sections ────────────────────────────────────────────────────────────────
 
@@ -25,6 +26,7 @@ const SECTIONS = {
   explication: renderExplication,
   calendrier:  renderCalendrier,
   analyse:     renderAnalyse,
+  stadiums:    renderStadiums,
   settings:    renderSettings,
 };
 

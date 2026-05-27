@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from api.config import ALLOWED_ORIGINS, IS_PROD, LOG_LEVEL, APP_ENV
-from api.routes import activities, charts, gps, reviews, config, records, sync, auth_routes, planning, gear, feedback, workouts, blocks
+from api.routes import activities, charts, gps, reviews, config, records, sync, auth_routes, planning, gear, feedback, workouts, blocks, stadiums
 from api.auth import init_db
 from api.migrate import auto_migrate_if_needed
 
@@ -105,6 +105,7 @@ app.include_router(gear.router)
 app.include_router(feedback.router)
 app.include_router(workouts.router)
 app.include_router(blocks.router)
+app.include_router(stadiums.router)
 
 # ── Cache headers ────────────────────────────────────────────────────────────
 
