@@ -305,6 +305,104 @@ def cluster_blocks(
 
 
 # ──────────────────────────────────────────────
+# 5.4 RÉATTACHEMENT DES BLOCS "NOISE" PROCHES D'UN CLUSTER
+# ──────────────────────────────────────────────
+
+def _reattach_noise_blocks(
+    blocks: pd.DataFrame,
+    pace_tol: float = 0.05,
+    max_dist_ratio: float = 2.0,
+) -> pd.DataFrame:
+    """
+    Rattache à un cluster valide les blocs marqués noise (cluster=-1) dont
+    l'allure correspond à ce cluster (±pace_tol) et dont la distance est
+    dans un ratio raisonnable (≤ max_dist_ratio) de la médiane du cluster.
+
+    Cas typique : un tempo 2km + 2.7km + 2km où le bloc dégradé (2.7km à
+    cause de la chaleur) tombe juste au-delà d'eps DBSCAN et finit en
+    cluster=-1 alors que son allure est identique aux 2km.
+    """
+    if blocks.empty or "cluster" not in blocks.columns:
+        return blocks
+
+    noise_idxs = blocks.index[blocks["cluster"] == -1].tolist()
+    if not noise_idxs:
+        return blocks
+
+    valid_clusters = [c for c in blocks["cluster"].unique() if c != -1]
+    if not valid_clusters:
+        return blocks
+
+    blocks = blocks.copy()
+    for cid in valid_clusters:
+        grp = blocks[blocks["cluster"] == cid]
+        pace_med = float(grp["pace_sec_km"].median())
+        dist_med = float(grp["distance_m"].median())
+        for idx in list(noise_idxs):
+            if blocks.at[idx, "cluster"] != -1:
+                continue
+            pace = float(blocks.at[idx, "pace_sec_km"])
+            dist = float(blocks.at[idx, "distance_m"])
+            if pace_med <= 0 or dist_med <= 0:
+                continue
+            pace_ratio = pace / pace_med
+            dist_ratio = max(dist, dist_med) / min(dist, dist_med)
+            if abs(pace_ratio - 1.0) <= pace_tol and dist_ratio <= max_dist_ratio:
+                blocks.at[idx, "cluster"] = cid
+
+    return blocks
+
+
+# ──────────────────────────────────────────────
+# 5.45 FILTRAGE DES CLUSTERS SPURIOUS (échauffement / récup)
+# ──────────────────────────────────────────────
+
+def _filter_spurious_clusters(
+    blocks: pd.DataFrame,
+    min_real_distance_m: float = 200.0,
+    pace_gap_ratio: float = 1.15,
+    heavyweight_total_m: float = 1500.0,
+) -> pd.DataFrame:
+    """
+    Élimine les clusters dont la distance médiane est très faible (< min_real_distance_m)
+    ET dont l'allure est significativement plus lente (pace_sec_km × pace_gap_ratio)
+    qu'un cluster « lourd » (total ≥ heavyweight_total_m).
+
+    Cas typique : un tempo 3×2000m où l'échauffement et la récup ont brièvement
+    franchi le seuil GMM, créant un faux cluster « 2 × 60m @ 4:39 » à côté du
+    vrai « 2×2000m @ 3:44 ».
+    """
+    if blocks.empty or "cluster" not in blocks.columns:
+        return blocks
+
+    valid_clusters = [c for c in blocks["cluster"].unique() if c != -1]
+    if len(valid_clusters) < 2:
+        return blocks
+
+    # Clusters lourds = candidats à être l'effort réel de la séance
+    heavy_paces = []
+    for cid in valid_clusters:
+        grp = blocks[blocks["cluster"] == cid]
+        if grp["distance_m"].sum() >= heavyweight_total_m:
+            heavy_paces.append(float(grp["pace_sec_km"].median()))
+
+    if not heavy_paces:
+        return blocks
+
+    fastest_heavy_pace = min(heavy_paces)  # plus petit pace_sec_km = plus rapide
+
+    blocks = blocks.copy()
+    for cid in valid_clusters:
+        grp = blocks[blocks["cluster"] == cid]
+        dist_med = float(grp["distance_m"].median())
+        pace_med = float(grp["pace_sec_km"].median())
+        if dist_med < min_real_distance_m and pace_med > fastest_heavy_pace * pace_gap_ratio:
+            blocks.loc[blocks["cluster"] == cid, "cluster"] = -1
+
+    return blocks
+
+
+# ──────────────────────────────────────────────
 # 5.5 TRIM DES "BONUS" APRÈS COUPURE STRUCTURELLE
 # ──────────────────────────────────────────────
 
@@ -459,6 +557,10 @@ def summarize_session(blocks: pd.DataFrame, recoveries: pd.DataFrame) -> list[di
         grp = grp.sort_values("start")
         n        = len(grp)
         dist_med = int(round(grp["distance_m"].median(), -1))   # arrondi à 10m
+        # Si les distances varient (CV > 12%), on liste la séquence réelle
+        # (ex: 2000m + 2600m + 2000m @ 3:43) au lieu de "3 × 2000m".
+        dist_cv  = float(grp["distance_m"].std() / (grp["distance_m"].mean() + 1e-6))
+        seq_dists = [int(round(d, -1)) for d in grp["distance_m"].tolist()]
         pace_med = grp["pace_sec_km"].median()
         bpm_med  = round(grp["mean_bpm"].median(), 1)
         cv_med   = round(grp["speed_cv"].median(), 3)
@@ -478,9 +580,15 @@ def summarize_session(blocks: pd.DataFrame, recoveries: pd.DataFrame) -> list[di
                 else:
                     recup_str = f", récup ~{recup_med}s"
 
+        if dist_cv > 0.12 and n >= 2:
+            seq_str = " + ".join(f"{d}m" for d in seq_dists)
+            desc = f"{seq_str} @ {_sec_to_pace(pace_med)}{recup_str}"
+        else:
+            desc = f"{n} × {dist_med}m @ {_sec_to_pace(pace_med)}{recup_str}"
+
         patterns.append({
             "cluster":      cluster_id,
-            "description":  f"{n} × {dist_med}m @ {_sec_to_pace(pace_med)}{recup_str}",
+            "description":  desc,
             "reps":         n,
             "distance_m":   dist_med,
             "pace_sec_km":  round(pace_med, 1),
@@ -1157,6 +1265,8 @@ def analyze_fractionne(
         return _no_frac
 
     blocks_clustered = cluster_blocks(blocks, eps=dbscan_eps)
+    blocks_clustered = _reattach_noise_blocks(blocks_clustered)
+    blocks_clustered = _filter_spurious_clusters(blocks_clustered)
     blocks_clustered = _trim_bonus_reps(blocks_clustered)
     recoveries       = extract_recoveries(df, blocks_clustered)
     patterns         = summarize_session(blocks_clustered, recoveries)
