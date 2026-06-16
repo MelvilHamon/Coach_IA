@@ -92,7 +92,7 @@ def preprocess(df: pd.DataFrame, sigma: float = 3.0) -> pd.DataFrame:
 # 2. SEUIL ADAPTATIF PAR GMM
 # ──────────────────────────────────────────────
 
-def find_effort_threshold_gmm(speed: np.ndarray) -> float:
+def find_effort_threshold_gmm(speed: np.ndarray, walk_floor_kmh: float = 6.0) -> float:
     """
     Ajuste un GMM à 2 composantes sur la distribution des vitesses.
     Le seuil est placé à 60 % entre les deux modes (légèrement côté rapide).
@@ -103,10 +103,24 @@ def find_effort_threshold_gmm(speed: np.ndarray) -> float:
       pour toute séance structurée.
     - S'adapte automatiquement au niveau de l'athlète et au type de séance.
 
+    Pourquoi exclure la marche/arrêt (< walk_floor_kmh) AVANT le GMM ?
+    - Sur une séance avec échauffement/retour au calme (ex : 3×1km noyés dans
+      16 km de footing), inclure la marche fait que le GMM sépare
+      « marche/arrêt vs course » au lieu de « footing vs effort » : le seuil
+      tombe ~8 km/h et tout le bloc roulant passe au-dessus → un seul gros bloc,
+      les intervalles sont perdus. En ne gardant que les échantillons en course
+      (>= 6 km/h), les deux modes deviennent footing vs allure rapide et le seuil
+      se place correctement entre les deux.
+
     Fallback : si le GMM ne converge pas ou que les données sont trop courtes,
     on retourne le quantile 0.80 (raisonnable dans tous les cas).
     """
-    speed_valid = speed[speed > 1.0]  # exclure l'arrêt / marche très lente
+    # On ne garde que les échantillons « en course » pour que la bimodalité
+    # capture footing vs effort. Repli sur > 1.0 (arrêt seul) si trop peu de
+    # points en course (profil très lent, tapis, séance courte) pour garder le
+    # GMM stable.
+    speed_run = speed[speed >= walk_floor_kmh]
+    speed_valid = speed_run if len(speed_run) >= 60 else speed[speed > 1.0]
     if len(speed_valid) < 60:
         return float(np.quantile(speed, 0.80))
 
@@ -654,6 +668,8 @@ def _validate_fractionne(
     min_ef_vs_mean: float      = 1.03,
     min_effort_speed_kmh: float = 0.0,
     athlete_mean_speed_kmh: float = 0.0,
+    min_recup_abs_s: float     = 15.0,
+    min_recup_effort_ratio: float = 0.10,
 ) -> bool:
     """
     Valide qu'une séance est un fractionné STRUCTURÉ, pas une simple variation de terrain.
@@ -810,6 +826,28 @@ def _validate_fractionne(
             if cv_core_median > max_block_cv:
                 return False
 
+    # ── Critère 3bis : plausibilité physiologique récup vs effort ────────────
+    # Une récup beaucoup plus courte que l'effort est physiologiquement
+    # impossible : ex. récup ~7-10s entre des efforts de ~4 min. C'est la
+    # signature d'un run CONTINU (tempo, footing soutenu) que DBSCAN a
+    # sur-segmenté en lisant des micro-creux GPS comme des « récups ». On rejette
+    # quand la récup médiane du cluster dominant est implausiblement courte par
+    # rapport à la durée d'effort médiane. Garde-fou demandé : il filtre les faux
+    # positifs introduits par un seuil GMM plus sélectif (footing vs effort).
+    if (not recoveries.empty and not blocks.empty
+            and "cluster" in blocks.columns):
+        valid_blks = blocks[blocks["cluster"] != -1]
+        if not valid_blks.empty:
+            best_cluster = valid_blks.groupby("cluster").size().idxmax()
+            cl_blocks = valid_blks[valid_blks["cluster"] == best_cluster]
+            cl_recups = recoveries[recoveries["cluster"] == best_cluster]
+            if len(cl_blocks) >= 2 and not cl_recups.empty:
+                med_effort = float((cl_blocks["end"] - cl_blocks["start"]).median())
+                med_recup  = float(cl_recups["recup_dur_s"].median())
+                min_plausible = max(min_recup_abs_s, min_recup_effort_ratio * med_effort)
+                if med_effort > 0 and med_recup < min_plausible:
+                    return False
+
     # ── Critère 4 : cohérence des récupérations du cluster dominant ──────────
     # Bypassé quand les signaux structurels sont forts :
     # - (tous profils) CV global ≥ 2× seuil ET ratio effort/récup ≥ 1.5 ;
@@ -863,13 +901,18 @@ def _check_session_intensity(
 ) -> bool:
     """
     Filtre rétroactif : un run avec pauses (feu, photo) peut faire émerger une
-    structure pseudo-fractionnée sans que la séance soit globalement intense.
-    On exige que la FC moyenne OU l'allure moyenne de la session atteigne un
-    palier cohérent avec le type détecté.
+    structure pseudo-fractionnée sans que les efforts soient réellement intenses.
+    On exige que la FC OU l'allure DES BLOCS D'EFFORT atteigne un palier cohérent
+    avec le type détecté.
 
-    Why: les faux positifs observés ont une FC moyenne et une allure moyenne
-    d'endurance — les "blocs" rapides sont juste l'allure normale entre deux
-    pauses, pas un effort fractionné.
+    Why mesurer sur les blocs et non sur la session entière :
+    un vrai fractionné (ex : 3×1km à allure 10K) noyé dans 16 km de footing a une
+    FC et une allure MOYENNES de session d'endurance (diluées par l'échauffement /
+    retour au calme), mais ses blocs d'effort sont clairement intenses. À l'inverse,
+    un footing-avec-pauses a des « blocs » à allure normale entre deux arrêts :
+    leur intensité reste celle de l'endurance → toujours rejeté. Mesurer sur les
+    blocs distingue donc proprement les deux cas. Repli sur la moyenne de session
+    si aucun bloc clusterisé n'est disponible (ex : pyramide en blocs « noise »).
 
     OU logique (pas ET) : couvre les runs sans FC et les athlètes qui ne
     poussent pas en FC mais clairement en allure.
@@ -910,9 +953,21 @@ def _check_session_intensity(
     if 0 < athlete_mean < 10.8:
         hr_pct_min -= 0.03
 
+    # Fenêtre de mesure : les blocs d'effort (cluster != -1) plutôt que toute la
+    # session. Repli sur la session entière si aucun bloc clusterisé.
+    effort_df = df
+    if not blocks.empty and "cluster" in blocks.columns:
+        valid_blocks = blocks[blocks["cluster"] != -1]
+        if not valid_blocks.empty:
+            mask = pd.Series(False, index=df.index)
+            for _, b in valid_blocks.iterrows():
+                mask |= (df["time_s"] >= b["start"]) & (df["time_s"] <= b["end"])
+            if mask.any():
+                effort_df = df[mask]
+
     hr_ok = None
-    if hr_max > 0 and "bpm_smooth" in df.columns:
-        bpm_valid = df["bpm_smooth"].dropna()
+    if hr_max > 0 and "bpm_smooth" in effort_df.columns:
+        bpm_valid = effort_df["bpm_smooth"].dropna()
         bpm_valid = bpm_valid[bpm_valid > 30]
         if len(bpm_valid) > 0:
             hr_mean = float(bpm_valid.mean())
@@ -921,7 +976,7 @@ def _check_session_intensity(
     spd_ok = None
     spd_min = float(profile.get(spd_key, 0.0))
     if spd_min > 0:
-        spd_mean = float(df["speed_smooth"].mean())
+        spd_mean = float(effort_df["speed_smooth"].mean())
         spd_ok   = spd_mean >= spd_min
 
     # Aucune donnée d'intensité → on ne filtre pas
@@ -1224,6 +1279,8 @@ def analyze_fractionne(
             max_block_cv = det_cfg.get("max_block_cv_run", 0.12)
     if max_recup_cv is None:
         max_recup_cv = det_cfg.get("max_recup_cv", 0.45)
+    min_recup_abs_s = det_cfg.get("min_recup_abs_s", 15.0)
+    min_recup_effort_ratio = det_cfg.get("min_recup_effort_ratio", 0.10)
 
     df = _read_stream_csv(activity_path)
     df = preprocess(df, sigma=sigma)
@@ -1281,6 +1338,8 @@ def analyze_fractionne(
         min_ef_vs_mean=min_ef_vs_mean,
         min_effort_speed_kmh=min_effort_speed_kmh,
         athlete_mean_speed_kmh=athlete_mean_speed_kmh,
+        min_recup_abs_s=min_recup_abs_s,
+        min_recup_effort_ratio=min_recup_effort_ratio,
     )
 
     pyramid = None

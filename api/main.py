@@ -16,11 +16,14 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
+from fastapi.exceptions import HTTPException as FastAPIHTTPException, RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from api.config import ALLOWED_ORIGINS, IS_PROD, LOG_LEVEL, APP_ENV
 from api.routes import activities, charts, gps, reviews, config, records, sync, auth_routes, planning, gear, feedback, workouts, blocks, stadiums
+from api.routes import v1_engine, v1_activities, v1_wellness, v1_keys
 from api.auth import init_db
 from api.migrate import auto_migrate_if_needed
 
@@ -106,6 +109,56 @@ app.include_router(feedback.router)
 app.include_router(workouts.router)
 app.include_router(blocks.router)
 app.include_router(stadiums.router)
+
+# ── /api/v1 (surface stable pour client externe) ─────────────────────────────
+
+app.include_router(v1_keys.router)
+app.include_router(v1_engine.router)
+app.include_router(v1_activities.router)
+app.include_router(v1_wellness.router)
+
+
+# Format d'erreur uniforme pour les routes /api/v1 :
+# {"error": "<code>", "message": "<texte>"}. Les routes hors v1 conservent
+# leur comportement actuel (detail brut) pour ne pas casser le frontend.
+@app.exception_handler(FastAPIHTTPException)
+async def _v1_http_exception_handler(request: Request, exc: FastAPIHTTPException):
+    if request.url.path.startswith("/api/v1") or request.url.path.startswith("/api/auth/api-keys"):
+        detail = exc.detail
+        if isinstance(detail, dict) and "error" in detail:
+            return JSONResponse(status_code=exc.status_code, content=detail)
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "error": _default_code_for(exc.status_code),
+                "message": str(detail) if detail else "Erreur.",
+            },
+        )
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.exception_handler(RequestValidationError)
+async def _v1_validation_handler(request: Request, exc: RequestValidationError):
+    if request.url.path.startswith("/api/v1") or request.url.path.startswith("/api/auth/api-keys"):
+        first = exc.errors()[0] if exc.errors() else {}
+        loc = ".".join(str(p) for p in first.get("loc", []))
+        msg = first.get("msg", "Paramètres invalides.")
+        return JSONResponse(status_code=422, content={
+            "error": "invalid_params",
+            "message": f"{loc}: {msg}" if loc else msg,
+        })
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
+
+
+def _default_code_for(status: int) -> str:
+    return {
+        400: "invalid_params",
+        401: "unauthorized",
+        403: "forbidden",
+        404: "not_found",
+        409: "conflict",
+        422: "invalid_params",
+    }.get(status, "internal_error")
 
 # ── Cache headers ────────────────────────────────────────────────────────────
 

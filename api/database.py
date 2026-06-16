@@ -145,6 +145,79 @@ def init_tables():
             )
         """))
 
+    # ── v1 API (Bearer key, wellness, session feedback) ─────────────────────
+    # Tables additives pour la surface /api/v1 consommée par l'app mobile.
+    # Idempotentes (CREATE TABLE IF NOT EXISTS) et compatibles SQLite + PG.
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS api_keys (
+                id            TEXT PRIMARY KEY,
+                user_id       TEXT NOT NULL REFERENCES users(id),
+                label         TEXT NOT NULL DEFAULT '',
+                key_hash      TEXT NOT NULL UNIQUE,
+                prefix        TEXT NOT NULL,
+                created_at    TEXT NOT NULL,
+                last_used_at  TEXT,
+                revoked_at    TEXT
+            )
+        """))
+
+        if IS_SQLITE:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS session_feedback (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id      TEXT NOT NULL REFERENCES users(id),
+                    activity_id  TEXT NOT NULL,
+                    rpe          INTEGER NOT NULL,
+                    affect       TEXT NOT NULL,
+                    reported_at  TEXT NOT NULL,
+                    created_at   TEXT NOT NULL
+                )
+            """))
+        else:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS session_feedback (
+                    id           SERIAL PRIMARY KEY,
+                    user_id      TEXT NOT NULL REFERENCES users(id),
+                    activity_id  TEXT NOT NULL,
+                    rpe          INTEGER NOT NULL,
+                    affect       TEXT NOT NULL,
+                    reported_at  TEXT NOT NULL,
+                    created_at   TEXT NOT NULL
+                )
+            """))
+
+        # session_labels : correction utilisateur du type de séance détecté
+        # automatiquement. Une ligne par (user_id, activity_id) — upsert via
+        # ON CONFLICT. validated_type prime sur la classification auto à
+        # l'affichage, et alimente le jeu de référence (tests/fixtures).
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS session_labels (
+                user_id         TEXT NOT NULL REFERENCES users(id),
+                activity_id     TEXT NOT NULL,
+                detected_type   TEXT,
+                validated_type  TEXT NOT NULL,
+                created_at      TEXT NOT NULL,
+                updated_at      TEXT NOT NULL,
+                PRIMARY KEY (user_id, activity_id)
+            )
+        """))
+
+        # wellness_daily : une ligne par (user_id, date) — upsert via ON CONFLICT.
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS wellness_daily (
+                user_id          TEXT NOT NULL REFERENCES users(id),
+                date             TEXT NOT NULL,
+                form_vs_normal   INTEGER NOT NULL,
+                motivation       INTEGER NOT NULL,
+                fatigue          INTEGER NOT NULL,
+                active_niggles   INTEGER NOT NULL,
+                created_at       TEXT NOT NULL,
+                updated_at       TEXT NOT NULL,
+                PRIMARY KEY (user_id, date)
+            )
+        """))
+
     # Migrations: add columns that may not exist in older databases
     with engine.begin() as conn:
         try:
@@ -157,5 +230,9 @@ def init_tables():
         try:
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_otp_email ON otp_codes(email, used)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_session_feedback_user_act ON session_feedback(user_id, activity_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_session_labels_user ON session_labels(user_id)"))
         except Exception:
             pass  # Index already exists

@@ -2,47 +2,42 @@
 api/routes/stadiums.py — Endpoint stades d'athlétisme fréquentés (PR par stade).
 """
 
-import json
 import os
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from api import storage
 from api.dependencies import get_current_user
 from api.user_data import UserPaths
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Référentiel national bundlé dans l'image (lecture seule, partagé entre users).
 _STADES_REF = os.path.join(_ROOT, "data", "stades_athle.json")
-_SESSIONS_DIR = os.path.join(_ROOT, "data", "track_sessions")
 
 router = APIRouter(prefix="/api/stadiums", tags=["stadiums"])
 
 
+def _track_dir(user_id: str) -> str:
+    return os.path.join(UserPaths(user_id).base, "track")
+
+
 def _track_pr_path(user_id: str) -> str:
-    user_path = os.path.join(UserPaths(user_id).base, "track_pr.json")
-    if os.path.exists(user_path):
-        return user_path
-    return os.path.join(_ROOT, "data", "track_pr.json")
+    return os.path.join(_track_dir(user_id), "track_pr.json")
 
 
 def _load_ref_index() -> dict:
-    if not os.path.exists(_STADES_REF):
+    data = storage.read_json(_STADES_REF)
+    if not isinstance(data, list):
         return {}
     try:
-        with open(_STADES_REF, encoding="utf-8") as f:
-            return {s["installation_id"]: s for s in json.load(f)}
-    except (json.JSONDecodeError, OSError, KeyError):
+        return {s["installation_id"]: s for s in data}
+    except (KeyError, TypeError):
         return {}
 
 
-def _load_session(strava_id: str) -> dict | None:
-    path = os.path.join(_SESSIONS_DIR, f"{strava_id}.json")
-    if not os.path.exists(path):
-        return None
-    try:
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return None
+def _load_session(user_id: str, strava_id: str) -> dict | None:
+    path = os.path.join(_track_dir(user_id), "sessions", f"{strava_id}.json")
+    return storage.read_json(path)
 
 
 def _compute_consecutive_prs(laps: list[dict], windows: list[int]) -> dict:
@@ -56,7 +51,7 @@ def _compute_consecutive_prs(laps: list[dict], windows: list[int]) -> dict:
     return out
 
 
-def _enrich_stadium(sid: str, s: dict, ref: dict) -> dict:
+def _enrich_stadium(user_id: str, sid: str, s: dict, ref: dict) -> dict:
     """Merge progression + reference + cross-session PRs."""
     ref_info = ref.get(sid, {})
     out = {
@@ -83,7 +78,7 @@ def _enrich_stadium(sid: str, s: dict, ref: dict) -> dict:
     pr_windows = {2: None, 3: None, 5: None, 10: None}
     pr_sessions = {2: None, 3: None, 5: None, 10: None}
     for p in s.get("progression", []):
-        sess = _load_session(p.get("strava_id"))
+        sess = _load_session(user_id, p.get("strava_id"))
         if not sess:
             continue
         summary = sess.get("summary", {}) or {}
@@ -113,18 +108,12 @@ def _enrich_stadium(sid: str, s: dict, ref: dict) -> dict:
 @router.get("")
 def list_stadiums(user: dict = Depends(get_current_user)):
     """Liste des stades fréquentés avec PR et progression enrichis."""
-    path = _track_pr_path(user["id"])
-    if not os.path.exists(path):
-        return {"stadiums": [], "global": {}}
-
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, OSError):
+    data = storage.read_json(_track_pr_path(user["id"]))
+    if not data:
         return {"stadiums": [], "global": {}}
 
     ref = _load_ref_index()
-    stadiums = [_enrich_stadium(sid, s, ref) for sid, s in data.items()]
+    stadiums = [_enrich_stadium(user["id"], sid, s, ref) for sid, s in data.items()]
     stadiums.sort(key=lambda s: s.get("n_sessions", 0), reverse=True)
 
     # Global aggregates across all stadiums
@@ -154,14 +143,9 @@ def list_stadiums(user: dict = Depends(get_current_user)):
 @router.get("/{stadium_id}/sessions")
 def stadium_sessions(stadium_id: str, user: dict = Depends(get_current_user)):
     """Détail de toutes les séances réalisées dans un stade."""
-    path = _track_pr_path(user["id"])
-    if not os.path.exists(path):
+    data = storage.read_json(_track_pr_path(user["id"]))
+    if not data:
         raise HTTPException(404, "no track data")
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, OSError):
-        raise HTTPException(500, "cannot read track_pr")
 
     s = data.get(stadium_id)
     if not s:
@@ -169,7 +153,7 @@ def stadium_sessions(stadium_id: str, user: dict = Depends(get_current_user)):
 
     sessions = []
     for p in s.get("progression", []):
-        sess = _load_session(p.get("strava_id"))
+        sess = _load_session(user["id"], p.get("strava_id"))
         item = {
             "date": p.get("date"),
             "strava_id": p.get("strava_id"),

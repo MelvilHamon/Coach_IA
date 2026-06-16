@@ -711,6 +711,27 @@ def _run_pipeline(user_id: str):
         else:
             result["steps_skipped"].append({"step": "personal_records", "reason": "aucune nouvelle activité GPS"})
 
+        # ── Étape 10 : Détection stade (par utilisateur, écrit dans R2) ────
+        # Branchée ici car elle a besoin du CSV enrichi (sport + dates) et des
+        # traces GPS. Isolée : un échec ne casse pas le reste du pipeline.
+        if analysis_ran or new_gps > 0 or not state_now.get("stadiums_last_run"):
+            try:
+                from stadium_pipeline import run_stadium_analysis
+                with redirect_stdout(buf):
+                    stad_res = run_stadium_analysis(data_dir=data_dir)
+                ss["steps_done"].append("stadiums")
+                result["steps_run"].append("stadiums")
+                result["stadiums"] = stad_res
+                fs = _load_file_state(paths)
+                fs["stadiums_last_run"] = datetime.now(timezone.utc).isoformat()
+                _save_file_state(paths, fs)
+            except Exception as e:
+                logger.error("[sync:%s] Stadium error: %s", user_id, e, exc_info=True)
+                ss["steps_done"].append(f"stadiums:error:{e}")
+                result["steps_run"].append("stadiums")
+        else:
+            result["steps_skipped"].append({"step": "stadiums", "reason": "aucune nouvelle activité GPS"})
+
         # ── Finalisation ─────────────────────────────────────────────────
         result["duration_s"] = round(time.time() - t_start, 1)
 

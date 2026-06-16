@@ -30,7 +30,10 @@ _R2_SECRET_KEY = os.environ.get("R2_SECRET_KEY", "")
 USE_R2 = bool(_R2_BUCKET and _R2_ENDPOINT and _R2_ACCESS_KEY and _R2_SECRET_KEY)
 
 # Subdirectories managed by R2 (relative to user base dir)
-_R2_MANAGED = ("gps", "streams", os.path.join("garmin", "streams"))
+# `track` contient les données stade par utilisateur (track_pr.json, sessions/,
+# inferred.json) générées pendant le sync : elles doivent vivre dans R2 en prod
+# car le filesystem du conteneur Railway est éphémère.
+_R2_MANAGED = ("gps", "streams", os.path.join("garmin", "streams"), "track")
 
 _s3_client = None
 

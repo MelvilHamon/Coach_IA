@@ -1,0 +1,262 @@
+[
+  {
+    "activity_id": 18759381772,
+    "sport_type": "Run",
+    "distance_km": 16.36,
+    "duration_min": 84.2,
+    "elevation_m": 71.0,
+    "hr_mean": 143.6,
+    "expected_type": "fractionné moyen",
+    "notes": "CAS CIBLE: 3x1km @ allure 10K noyés dans 16km de footing — était classé sortie longue"
+  },
+  {
+    "activity_id": 13680021632,
+    "sport_type": "Run",
+    "distance_km": 5.58,
+    "duration_min": 30.9,
+    "elevation_m": 25.1,
+    "hr_mean": null,
+    "expected_type": "fractionné moyen",
+    "notes": "4x610m récup ~78s, était récupération active (sortie courte)"
+  },
+  {
+    "activity_id": 7992837447,
+    "sport_type": "Run",
+    "distance_km": 6.37,
+    "duration_min": 35.1,
+    "elevation_m": 8.5,
+    "hr_mean": null,
+    "expected_type": "fractionné court",
+    "notes": "vrai fractionné court stable"
+  },
+  {
+    "activity_id": 9756895781,
+    "sport_type": "Run",
+    "distance_km": 8.74,
+    "duration_min": 42.6,
+    "elevation_m": 23.1,
+    "hr_mean": null,
+    "expected_type": "fractionné court",
+    "notes": "séance piste"
+  },
+  {
+    "activity_id": 15328406095,
+    "sport_type": "Run",
+    "distance_km": 10.11,
+    "duration_min": 53.5,
+    "elevation_m": 156.8,
+    "hr_mean": 162.0,
+    "expected_type": "fractionné court",
+    "notes": "séance piste, était masqué en tempo (allure moyenne haute)"
+  },
+  {
+    "activity_id": 17376107018,
+    "sport_type": "Run",
+    "distance_km": 7.92,
+    "duration_min": 40.6,
+    "elevation_m": 43.9,
+    "hr_mean": 148.9,
+    "expected_type": "fractionné court",
+    "notes": "intervalles, était masqué en tempo"
+  },
+  {
+    "activity_id": 10637352184,
+    "sport_type": "Run",
+    "distance_km": 10.01,
+    "duration_min": 50.4,
+    "elevation_m": 19.0,
+    "hr_mean": null,
+    "expected_type": "fractionné long",
+    "notes": "vrai fractionné long stable"
+  },
+  {
+    "activity_id": 11008939789,
+    "sport_type": "Run",
+    "distance_km": 7.98,
+    "duration_min": 36.4,
+    "elevation_m": 31.7,
+    "hr_mean": null,
+    "expected_type": "fractionné long",
+    "notes": "vrai fractionné long stable"
+  },
+  {
+    "activity_id": 17508756701,
+    "sport_type": "Run",
+    "distance_km": 9.8,
+    "duration_min": 50.2,
+    "elevation_m": 95.9,
+    "hr_mean": 146.4,
+    "expected_type": "fractionné pyramide symétrique",
+    "notes": "pyramide stable"
+  },
+  {
+    "activity_id": 18611022405,
+    "sport_type": "Run",
+    "distance_km": 8.45,
+    "duration_min": 52.9,
+    "elevation_m": 13.0,
+    "hr_mean": 134.1,
+    "expected_type": "fractionné court",
+    "notes": "ex \"fractionné sprint\" (4x90m) — reste famille fractionné"
+  },
+  {
+    "activity_id": 6965056291,
+    "sport_type": "Run",
+    "distance_km": 11.92,
+    "duration_min": 59.4,
+    "elevation_m": 240.3,
+    "hr_mean": null,
+    "expected_type": "mixte",
+    "notes": "séance variée (court+long), était masquée en tempo"
+  },
+  {
+    "activity_id": 4834603231,
+    "sport_type": "Run",
+    "distance_km": 7.54,
+    "duration_min": 39.0,
+    "elevation_m": 211.2,
+    "hr_mean": null,
+    "expected_type": "endurance fondamentale",
+    "notes": "PIEGE: run continu, blocs récup ~10s = bruit -> ne doit PAS être fractionné"
+  },
+  {
+    "activity_id": 16684451849,
+    "sport_type": "Run",
+    "distance_km": 8.22,
+    "duration_min": 39.1,
+    "elevation_m": 97.6,
+    "hr_mean": 152.6,
+    "expected_type": "tempo / seuil",
+    "notes": "PIEGE: tempo continu, blocs récup ~7s = bruit"
+  },
+  {
+    "activity_id": 10395922464,
+    "sport_type": "Run",
+    "distance_km": 11.38,
+    "duration_min": 53.8,
+    "elevation_m": 39.6,
+    "hr_mean": null,
+    "expected_type": "tempo / seuil",
+    "notes": "PIEGE: run soutenu, blocs récup ~13s = bruit"
+  },
+  {
+    "activity_id": 4504342745,
+    "sport_type": "Run",
+    "distance_km": 7.85,
+    "duration_min": 40.8,
+    "elevation_m": 175.7,
+    "hr_mean": null,
+    "expected_type": "endurance fondamentale",
+    "notes": "PIEGE: fartlek diffus récup ~9s sous le plancher de plausibilité"
+  },
+  {
+    "activity_id": 6161154757,
+    "sport_type": "Run",
+    "distance_km": 16.68,
+    "duration_min": 85.3,
+    "elevation_m": 119.2,
+    "hr_mean": null,
+    "expected_type": "sortie longue",
+    "notes": "16.7km continu"
+  },
+  {
+    "activity_id": 6191087317,
+    "sport_type": "Run",
+    "distance_km": 20.29,
+    "duration_min": 116.8,
+    "elevation_m": 368.5,
+    "hr_mean": null,
+    "expected_type": "sortie longue",
+    "notes": "20.3km continu"
+  },
+  {
+    "activity_id": 6316138185,
+    "sport_type": "Run",
+    "distance_km": 21.32,
+    "duration_min": 121.1,
+    "elevation_m": 31.5,
+    "hr_mean": null,
+    "expected_type": "sortie longue",
+    "notes": "21.3km continu"
+  },
+  {
+    "activity_id": 4389777032,
+    "sport_type": "Run",
+    "distance_km": 8.32,
+    "duration_min": 42.3,
+    "elevation_m": 219.0,
+    "hr_mean": null,
+    "expected_type": "endurance fondamentale",
+    "notes": "footing facile"
+  },
+  {
+    "activity_id": 6239490659,
+    "sport_type": "Run",
+    "distance_km": 13.12,
+    "duration_min": 80.0,
+    "elevation_m": 281.5,
+    "hr_mean": null,
+    "expected_type": "endurance fondamentale",
+    "notes": "footing long facile"
+  },
+  {
+    "activity_id": 6787797793,
+    "sport_type": "Run",
+    "distance_km": 12.44,
+    "duration_min": 57.5,
+    "elevation_m": 65.1,
+    "hr_mean": null,
+    "expected_type": "tempo / seuil",
+    "notes": "tempo continu"
+  },
+  {
+    "activity_id": 6923700893,
+    "sport_type": "Run",
+    "distance_km": 10.0,
+    "duration_min": 43.5,
+    "elevation_m": 3.6,
+    "hr_mean": null,
+    "expected_type": "tempo / seuil",
+    "notes": "tempo continu"
+  },
+  {
+    "activity_id": 4398620703,
+    "sport_type": "Run",
+    "distance_km": 8.23,
+    "duration_min": 52.6,
+    "elevation_m": 366.4,
+    "hr_mean": null,
+    "expected_type": "trail",
+    "notes": "trail (D+/km élevé)"
+  },
+  {
+    "activity_id": 4421417275,
+    "sport_type": "Run",
+    "distance_km": 8.24,
+    "duration_min": 52.2,
+    "elevation_m": 411.3,
+    "hr_mean": null,
+    "expected_type": "trail",
+    "notes": "trail (D+/km élevé)"
+  },
+  {
+    "activity_id": 6921359876,
+    "sport_type": "Run",
+    "distance_km": 0.0,
+    "duration_min": 0.2,
+    "elevation_m": 0.0,
+    "hr_mean": null,
+    "expected_type": "récupération active",
+    "notes": "sortie très courte FC basse"
+  },
+  {
+    "activity_id": 7309221964,
+    "sport_type": "Run",
+    "distance_km": 2.98,
+    "duration_min": 16.2,
+    "elevation_m": 2.2,
+    "hr_mean": null,
+    "expected_type": "récupération active",
+    "notes": "3km récup"
+  }
+]

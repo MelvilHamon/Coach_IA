@@ -3,7 +3,11 @@
 .garth/
 
 # Données personnelles
-data/
+# On ignore le CONTENU de data/ (data/*) plutôt que le dossier lui-même, pour
+# pouvoir ré-inclure une exception : le référentiel public des stades, embarqué
+# dans l'image Docker (un parent ignoré empêcherait toute ré-inclusion).
+data/*
+!data/stades_athle.json
 objectif.txt
 config.json
 

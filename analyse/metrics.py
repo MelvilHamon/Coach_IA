@@ -1416,6 +1416,61 @@ def compute_gap(points: list[dict]) -> dict:
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
+def compute_acwr_rolling(daily_load, at) -> float | None:
+    """
+    ACWR "rolling" (somme aiguë / moyenne chronique), conforme à la définition
+    classique Hulin et al. 2016 — utilisée par la surface /api/v1/engine/state.
+
+    Distinct du compute_acwr() EWMA ci-dessus, qui reste utilisé partout
+    ailleurs dans la pipeline analyse.
+
+    Paramètres
+    ----------
+    daily_load : dict[date | str | pd.Timestamp, float]
+        Charge quotidienne (TRIMP, km, ou autre proxy). Jours manquants = 0.
+    at : date | str | pd.Timestamp
+        Jour de référence (inclus dans la fenêtre).
+
+    Règles
+    ------
+    - Aiguë      : somme glissante 7j (J inclus).
+    - Chronique  : moyenne glissante 28j (J inclus).
+    - Ratio      : aiguë / chronique.
+    - None si moins de 7 jours d'historique avant `at` (J inclus).
+    - None si chronique nulle (division par zéro).
+    """
+    from datetime import date as _date
+
+    if not daily_load:
+        return None
+
+    def _to_date(x):
+        if isinstance(x, _date):
+            return x
+        return pd.Timestamp(x).date()
+
+    at_d = _to_date(at)
+    loads = {_to_date(k): float(v) for k, v in daily_load.items()}
+
+    # Historique disponible avant ou à `at`
+    earliest = min(loads.keys())
+    history_days = (at_d - earliest).days + 1
+    if history_days < 7:
+        return None
+
+    # Fenêtres (J inclus)
+    acute_start = at_d - timedelta(days=6)
+    chronic_start = at_d - timedelta(days=27)
+
+    acute_sum = sum(v for d, v in loads.items() if acute_start <= d <= at_d)
+    chronic_vals = [loads.get(chronic_start + timedelta(days=i), 0.0) for i in range(28)]
+    chronic_mean = sum(chronic_vals) / 28.0
+
+    if chronic_mean == 0:
+        return None
+    return round(acute_sum / chronic_mean, 3)
+
+
 def acwr_label(acwr: float) -> str:
     """Étiquette textuelle de l'ACWR."""
     if acwr < 0.8:

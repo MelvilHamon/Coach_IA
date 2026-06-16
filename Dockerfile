@@ -19,6 +19,11 @@ COPY frontend/ frontend/
 COPY fit_builder/ fit_builder/
 COPY serveur/ serveur/
 
+# Référentiel national des stades d'athlétisme (lecture seule, partagé entre
+# utilisateurs). Suivi par git via une exception .gitignore pour être présent
+# dans le contexte de build Railway.
+COPY data/stades_athle.json data/stades_athle.json
+
 # Railway injects PORT; default to 8000
 ENV PORT=8000
 ENV APP_ENV=production

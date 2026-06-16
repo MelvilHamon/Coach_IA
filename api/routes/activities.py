@@ -2,13 +2,56 @@
 api/routes/activities.py — Endpoints activités.
 """
 
-from fastapi import APIRouter, Depends, Query
+from datetime import datetime, timezone
 from typing import Optional
 
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
+from sqlalchemy import text
+
+from api.database import get_db
 from api.deps import load_activities, get_stream, nan_safe
 from api.dependencies import get_current_user
 
 router = APIRouter(prefix="/api/activities", tags=["activities"])
+
+# Types de séance valides pour une correction manuelle (vocabulaire de
+# session_classifier, course + vélo).
+VALID_SESSION_TYPES = frozenset({
+    "fractionné court", "fractionné moyen", "fractionné long", "mixte",
+    "fractionné sprint", "fractionné pyramide symétrique",
+    "fractionné pyramide ascendante", "fractionné pyramide descendante",
+    "tempo / seuil", "endurance fondamentale", "sortie longue", "trail",
+    "récupération active", "randonnée", "autre",
+    "intervalles vélo", "récupération vélo", "sortie longue vélo",
+    "tempo vélo", "endurance vélo",
+})
+
+
+class SessionTypeOverride(BaseModel):
+    session_type: str
+
+
+def _load_validated_labels(user_id: str) -> dict[str, str]:
+    """Retourne {activity_id(str): validated_type} pour cet utilisateur."""
+    with get_db() as db:
+        rows = db.execute(text(
+            "SELECT activity_id, validated_type FROM session_labels WHERE user_id = :uid"
+        ), {"uid": user_id}).fetchall()
+    return {str(r[0]): r[1] for r in rows}
+
+
+def _apply_overrides(df, user_id: str):
+    """Applique les corrections utilisateur sur la colonne session_type."""
+    labels = _load_validated_labels(user_id)
+    if not labels or df.empty or "session_type" not in df.columns:
+        return df
+    df = df.copy()
+    ids = df["ID"].astype(str)
+    df.loc[:, "session_type"] = [
+        labels.get(aid, st) for aid, st in zip(ids, df["session_type"])
+    ]
+    return df
 
 
 @router.get("")
@@ -24,6 +67,9 @@ def list_activities(
     df = load_activities(user["id"])
     if df.empty:
         return {"activities": [], "total": 0}
+
+    # Les corrections manuelles priment sur la classification auto (avant filtre).
+    df = _apply_overrides(df, user["id"])
 
     if sport and sport != "all" and "sport" in df.columns:
         df = df[df["sport"] == sport]
@@ -100,6 +146,8 @@ def get_activity(activity_id: int, user: dict = Depends(get_current_user)):
     if df.empty:
         return {"error": "no_data"}
 
+    df = _apply_overrides(df, user["id"])
+
     mask = df["ID"].astype(int) == activity_id
     if not mask.any():
         return {"error": "not_found"}
@@ -128,6 +176,54 @@ def get_activity(activity_id: int, user: dict = Depends(get_current_user)):
     })
 
     return detail
+
+
+@router.put("/{activity_id}/session_type")
+def set_session_type(
+    activity_id: int,
+    body: SessionTypeOverride,
+    user: dict = Depends(get_current_user),
+):
+    """Corrige manuellement le type de séance (override de la détection auto).
+
+    Stocke le label validé dans session_labels (upsert) ; il prime ensuite sur
+    la classification automatique et alimente le jeu de référence.
+    """
+    new_type = body.session_type.strip()
+    if new_type not in VALID_SESSION_TYPES:
+        raise HTTPException(422, detail={
+            "error": "invalid_session_type",
+            "message": f"Type inconnu : {new_type!r}",
+            "valid": sorted(VALID_SESSION_TYPES),
+        })
+
+    # Type détecté courant (pour traçabilité detected vs validated).
+    detected = None
+    df = load_activities(user["id"])
+    if not df.empty:
+        m = df["ID"].astype(int) == activity_id
+        if not m.any():
+            raise HTTPException(404, detail={"error": "not_found"})
+        detected = df[m].iloc[0].get("session_type")
+
+    now = datetime.now(timezone.utc).isoformat()
+    params = {
+        "uid": user["id"], "act": str(activity_id),
+        "det": detected, "val": new_type, "now": now,
+    }
+    # ON CONFLICT identique SQLite/PostgreSQL (PK (user_id, activity_id)).
+    with get_db() as db:
+        db.execute(text("""
+            INSERT INTO session_labels
+                (user_id, activity_id, detected_type, validated_type, created_at, updated_at)
+            VALUES (:uid, :act, :det, :val, :now, :now)
+            ON CONFLICT(user_id, activity_id) DO UPDATE SET
+                validated_type = :val,
+                updated_at     = :now
+        """), params)
+
+    return {"ok": True, "activity_id": activity_id,
+            "session_type": new_type, "detected_type": detected}
 
 
 @router.get("/{activity_id}/stream")

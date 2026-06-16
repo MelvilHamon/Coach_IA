@@ -1,0 +1,17 @@
+{
+  "athlete": {
+    "hr_max": 195,
+    "hr_max_source": "user",
+    "hr_rest": 43,
+    "hr_rest_source": "user",
+    "sex": "male"
+  },
+  "athlete_speed_profile": {
+    "p70_kmh": 11.81,
+    "p75_kmh": 12.04,
+    "p80_kmh": 12.31,
+    "mean_kmh": 11.12,
+    "computed_from_n_activities": 286,
+    "last_updated": "2026-06-03T14:39:40.273171+00:00"
+  }
+}
