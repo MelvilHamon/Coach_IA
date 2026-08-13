@@ -46,6 +46,49 @@ const AX = {
 
 const PLOTLY_CONFIG = { displayModeBar: false, responsive: true };
 
+// ── Adaptation mobile ───────────────────────────────────────────────────────
+
+const MOBILE_QUERY = window.matchMedia('(max-width: 768px)');
+
+/**
+ * Rend une mise en page Plotly lisible sur un écran étroit.
+ *
+ * Les hauteurs des graphes sont fixées à la construction (220 à 400 px) : sur
+ * un téléphone en portrait, 400 px c'est la moitié de l'écran pour un seul
+ * graphe. On plafonne, on resserre les marges, et on allège les axes — un axe
+ * de dates à 17 graduations sur 340 px de large ne se lit pas.
+ *
+ * Appliqué au passage dans safePlot() : tous les graphes en profitent sans
+ * toucher aux quinze appels qui construisent les layouts.
+ */
+function adaptLayout(layout) {
+  if (!MOBILE_QUERY.matches) return layout;
+
+  const maxH = Math.round(window.innerHeight * 0.42);
+  const out = {
+    ...layout,
+    height: Math.min(layout.height || 300, maxH),
+    // 'x unified' affiche une infobulle qui suit le curseur : au doigt, elle
+    // recouvre la zone qu'on cherche à lire.
+    hovermode: 'closest',
+    margin: { ...(layout.margin || {}), l: 38, r: 12, t: 12, b: 32 },
+  };
+
+  for (const axis of ['xaxis', 'xaxis2', 'yaxis', 'yaxis2']) {
+    if (!out[axis]) continue;
+    out[axis] = {
+      ...out[axis],
+      tickfont: { ...(out[axis].tickfont || {}), size: 9 },
+      ...(axis.startsWith('xaxis') ? { nticks: 5, automargin: true } : { nticks: 5 }),
+    };
+  }
+
+  if (out.showlegend) {
+    out.legend = { ...(out.legend || {}), font: { ...((out.legend || {}).font || {}), size: 9 } };
+  }
+  return out;
+}
+
 /**
  * Safe wrapper around Plotly.newPlot — shows a message if Plotly isn't loaded.
  */
@@ -65,7 +108,7 @@ function safePlot(container, traces, layout, config) {
     if (container) container.innerHTML = `<div class="ca-empty">${t('charts.notEnough')}</div>`;
     return;
   }
-  Plotly.newPlot(container, traces, layout, config);
+  Plotly.newPlot(container, traces, adaptLayout(layout), config);
 }
 
 // ── Type palette ────────────────────────────────────────────────────────────

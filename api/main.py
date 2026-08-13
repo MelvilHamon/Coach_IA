@@ -49,6 +49,14 @@ async def lifespan(app: FastAPI):
     if IS_PROD and (not ALLOWED_ORIGINS or ALLOWED_ORIGINS == ["*"]):
         logger.warning("ALLOWED_ORIGINS not set in production! Set it to your domain.")
 
+    # Le référentiel des stades est embarqué dans l'image (Dockerfile). S'il
+    # manque, l'onglet "Mes stades" reste vide sans autre signe extérieur.
+    if not stadiums.reference_available():
+        logger.warning(
+            "Référentiel des stades absent — l'onglet \"Mes stades\" restera vide. "
+            "Vérifier le COPY data/stades_athle.json du Dockerfile et l'exception .dockerignore."
+        )
+
     # Init user database
     init_db()
     logger.info("Base utilisateurs initialisée")

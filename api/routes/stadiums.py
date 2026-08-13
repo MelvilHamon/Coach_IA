@@ -2,6 +2,7 @@
 api/routes/stadiums.py — Endpoint stades d'athlétisme fréquentés (PR par stade).
 """
 
+import logging
 import os
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,7 +15,19 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 # Référentiel national bundlé dans l'image (lecture seule, partagé entre users).
 _STADES_REF = os.path.join(_ROOT, "data", "stades_athle.json")
 
+logger = logging.getLogger("coachagent")
+
 router = APIRouter(prefix="/api/stadiums", tags=["stadiums"])
+
+
+def reference_available() -> bool:
+    """Le référentiel national est-il présent dans l'image ?
+
+    Absent = build Docker parti sans data/stades_athle.json : la détection ne
+    peut rien matcher et l'onglet reste vide. On distingue ce cas de "l'athlète
+    n'a couru dans aucun stade", qui produirait sinon la même réponse vide.
+    """
+    return storage.exists(_STADES_REF)
 
 
 def _track_dir(user_id: str) -> str:
@@ -28,6 +41,11 @@ def _track_pr_path(user_id: str) -> str:
 def _load_ref_index() -> dict:
     data = storage.read_json(_STADES_REF)
     if not isinstance(data, list):
+        logger.error(
+            "Référentiel des stades illisible ou absent (%s) — les stades ne "
+            "seront pas enrichis. Vérifier que le Dockerfile embarque bien ce fichier.",
+            _STADES_REF,
+        )
         return {}
     try:
         return {s["installation_id"]: s for s in data}
@@ -108,6 +126,9 @@ def _enrich_stadium(user_id: str, sid: str, s: dict, ref: dict) -> dict:
 @router.get("")
 def list_stadiums(user: dict = Depends(get_current_user)):
     """Liste des stades fréquentés avec PR et progression enrichis."""
+    if not reference_available():
+        return {"stadiums": [], "global": {}, "error": "no_reference"}
+
     data = storage.read_json(_track_pr_path(user["id"]))
     if not data:
         return {"stadiums": [], "global": {}}

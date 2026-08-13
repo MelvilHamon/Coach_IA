@@ -76,7 +76,9 @@ export async function renderProfil(container) {
         ));
       }
       table.appendChild(tbody);
-      prSection.appendChild(table);
+      // .ca-table-wrap : filet de sécurité, la table de records déborde d'un
+      // écran de 375px dès qu'une valeur s'allonge.
+      prSection.appendChild(el('div', { className: 'ca-table-wrap' }, table));
     } else {
       prSection.appendChild(empty(t('profil.noRecords')));
     }
@@ -117,7 +119,7 @@ export async function renderProfil(container) {
           ));
         }
         table.appendChild(tbody);
-        powerSection.appendChild(table);
+        powerSection.appendChild(el('div', { className: 'ca-table-wrap' }, table));
       } else {
         powerSection.appendChild(empty(t('profil.noPowerRecords') || 'Aucun record de puissance — connectez un capteur de puissance.'));
       }

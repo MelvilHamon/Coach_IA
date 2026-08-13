@@ -5,7 +5,7 @@
 import { api } from '../api.js';
 import {
   el, sectionTitle, badge, fmt, fmtDate, loading, empty,
-  acwrColor, riskColor, reviewBox,
+  acwrColor, riskColor, reviewBox, tableWrap,
 } from '../components.js';
 import { getCurrentSport, setPendingActivityId } from '../state.js';
 import { t } from '../i18n.js';
@@ -200,7 +200,6 @@ function renderTable(container, activities) {
     tbody.appendChild(row);
   }
 
-  container.appendChild(el('div', { className: 'ca-table-wrap' },
-    el('table', { className: 'ca-table' }, thead, tbody),
-  ));
+  // primary: 1 → la colonne « Nom » sert de titre de carte sur mobile.
+  container.appendChild(tableWrap(thead, tbody, { primary: 1 }));
 }

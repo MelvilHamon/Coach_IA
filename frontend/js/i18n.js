@@ -100,6 +100,17 @@ const DICT = {
       bike: 'Vélo',
       runTitle: 'Course à pied',
       bikeTitle: 'Vélo',
+      // Libellés courts : la barre de navigation mobile a 5 colonnes, un
+      // libellé y tient sur une ligne d'environ 9 caractères.
+      shortOverview: 'Résumé',
+      shortCalendrier: 'Agenda',
+      shortAnalyse: 'Analyse',
+      shortStadiums: 'Stades',
+      more: 'Plus',
+      moreTitle: 'Autres rubriques',
+    },
+    map: {
+      tapToExplore: 'Appuyez pour explorer la carte',
     },
     onboarding: {
       welcome: 'Bienvenue sur PacePilot !',
@@ -296,6 +307,7 @@ const DICT = {
       profilesTitle: 'Profils allure & altitude',
       profilesExplain: 'Allure lissée par filtre de Savitzky-Golay (fenêtre 11 points). Le dénivelé (gris, axe droit) est affiché en fond pour contextualiser les variations d\'allure.',
       addEffort: '+ Bloc effort',
+      blocksDesktopOnly: 'Le découpage manuel en blocs d\'effort se fait sur ordinateur, en glissant la souris sur le graphe.',
       stop: 'Terminer',
       clearAll: 'Tout effacer',
       effort: 'Effort',
@@ -325,6 +337,7 @@ const DICT = {
     },
     calendrier: {
       days: ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'],
+      emptyMonth: 'Aucune séance ce mois-ci. Utilise « Planifier » pour en ajouter une.',
       months: ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'],
       monthsShort: ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc'],
       planTypes: [
@@ -564,6 +577,15 @@ const DICT = {
       bike: 'Bike',
       runTitle: 'Running',
       bikeTitle: 'Cycling',
+      shortOverview: 'Summary',
+      shortCalendrier: 'Agenda',
+      shortAnalyse: 'Analyse',
+      shortStadiums: 'Tracks',
+      more: 'More',
+      moreTitle: 'More sections',
+    },
+    map: {
+      tapToExplore: 'Tap to explore the map',
     },
     onboarding: {
       welcome: 'Welcome to PacePilot!',
@@ -760,6 +782,7 @@ const DICT = {
       profilesTitle: 'Pace & altitude profiles',
       profilesExplain: 'Pace smoothed by Savitzky-Golay filter (11-point window). Elevation (gray, right axis) is shown in the background to contextualize pace variations.',
       addEffort: '+ Effort block',
+      blocksDesktopOnly: 'Manual effort-block selection is done on desktop, by dragging across the chart.',
       stop: 'Done',
       clearAll: 'Clear all',
       effort: 'Effort',
@@ -789,6 +812,7 @@ const DICT = {
     },
     calendrier: {
       days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+      emptyMonth: 'No sessions this month. Use "Plan" to add one.',
       months: ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'],
       monthsShort: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
       planTypes: [

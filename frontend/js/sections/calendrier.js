@@ -1028,6 +1028,78 @@ function _renderMonth(calArea, activities, viewYear, viewMonth, rerender) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// VIEW: AGENDA (mobile)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Vue agenda : la grille sept colonnes du mois n'est pas lisible sous 768px
+ * (47px par colonne). On déroule le même mois en liste chronologique, groupée
+ * par semaine avec son total — seuls les jours qui portent quelque chose sont
+ * affichés. Mêmes données, mêmes interactions : le tap ouvre le popup du jour,
+ * et « Planifier » reste dans la barre du haut.
+ */
+function _renderAgenda(calArea, activities, viewYear, viewMonth, rerender) {
+  calArea.innerHTML = '';
+  const actsByDate = _indexByDate(activities);
+  const plannedByDate = _indexPlannedByDate();
+  const rows = _weekRows(viewYear, viewMonth);
+  const today = _todayKey();
+  const dayNames = DAY_NAMES();
+
+  const list = el('div', { className: 'cg-agenda' });
+  let shown = 0;
+
+  for (const week of rows) {
+    const days = week.map(w => w.date);
+    const dayEls = [];
+
+    for (const wd of days) {
+      const key = _dk(wd);
+      const dayActs = actsByDate[key] || [];
+      const dayPlanned = plannedByDate[key] || [];
+      if (!dayActs.length && !dayPlanned.length) continue;
+
+      const items = el('div', { className: 'cg-agenda-items' });
+      for (const a of dayActs) items.appendChild(_activityLine(a));
+      for (const pl of dayPlanned) {
+        items.appendChild(_plannedLine(pl, key, dayActs.length > 0,
+          () => _openEditModal(pl, rerender),
+          async () => { await api.deletePlanned(pl.id); await _loadPlannedFromApi(); rerender(); },
+        ));
+      }
+
+      const row = el('div', {
+        className: `cg-agenda-day${key === today ? ' cg-agenda-today' : ''}`,
+        onClick: (e) => { e.stopPropagation(); _showPopup(row, dayActs, dayPlanned, key, rerender); },
+      },
+        el('div', { className: 'cg-agenda-date' },
+          el('span', { className: 'cg-agenda-dow' }, dayNames[(wd.getDay() + 6) % 7]),
+          el('span', { className: 'cg-agenda-num' }, String(wd.getDate())),
+        ),
+        items,
+      );
+      dayEls.push(row);
+    }
+
+    if (!dayEls.length) continue;  // semaine sans rien : pas d'en-tête orphelin
+
+    const wt = _weekTotals(days, actsByDate);
+    const from = days[0], to = days[6];
+    list.appendChild(el('div', { className: 'cg-agenda-week' },
+      el('span', { className: 'cg-agenda-week-range' },
+        `${from.getDate()} ${MONTH_SHORT()[from.getMonth()]} – ${to.getDate()} ${MONTH_SHORT()[to.getMonth()]}`),
+      el('span', { className: 'cg-agenda-week-tot' },
+        wt.count ? `${fmt(wt.dist, 1)} km · ${_fmtDuration(wt.dur)}` : ''),
+    ));
+    dayEls.forEach(r => list.appendChild(r));
+    shown += dayEls.length;
+  }
+
+  if (!shown) list.appendChild(el('div', { className: 'ca-empty' }, t('calendrier.emptyMonth')));
+  calArea.appendChild(list);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // VIEW: WEEK
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -1334,15 +1406,28 @@ export async function renderCalendrier(container) {
 
     // ── Rerender ─────────────────────────────────────────────────────────
     function rerender() {
-      if (currentView === 'month') {
-        _renderMonth(calArea, activities, viewYear, viewMonth, rerender);
-      } else if (currentView === 'week') {
-        _renderWeek(calArea, activities, viewMonday, rerender);
-      } else {
+      // Sous 768px, mois et semaine passent par l'agenda : les grilles à sept et
+      // huit colonnes n'y sont pas lisibles. La vue année reste une grille — ses
+      // cellules sont des pastilles, elles supportent l'étroitesse.
+      const narrow = window.matchMedia('(max-width: 768px)').matches;
+      if (currentView === 'year') {
         _renderYear(calArea, activities, viewYear);
+      } else if (narrow) {
+        const y = currentView === 'week' ? viewMonday.getFullYear() : viewYear;
+        const m = currentView === 'week' ? viewMonday.getMonth() : viewMonth;
+        _renderAgenda(calArea, activities, y, m, rerender);
+      } else if (currentView === 'month') {
+        _renderMonth(calArea, activities, viewYear, viewMonth, rerender);
+      } else {
+        _renderWeek(calArea, activities, viewMonday, rerender);
       }
       updateFooter();
     }
+
+    // Bascule grille ↔ agenda au changement de largeur ou à la rotation.
+    window.addEventListener('ca:resize', () => {
+      if (calArea.isConnected) rerender();
+    });
 
     // ── Assemble ─────────────────────────────────────────────────────────
     const wrapper = el('div', { className: 'cg-fullpage' });

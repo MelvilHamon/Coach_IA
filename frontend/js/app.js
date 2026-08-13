@@ -47,6 +47,9 @@ function showApp(user) {
   document.getElementById('app-shell').style.display = '';
   const userEl = document.getElementById('header-user');
   if (userEl) userEl.textContent = user.display_name || user.email;
+  // La coquille était masquée jusqu'ici : ses hauteurs n'étaient pas mesurables.
+  measureChrome();
+  placeSharedControls();
 }
 
 function initAuthForms() {
@@ -137,13 +140,97 @@ async function checkSession() {
 
 // ── Navigation ──────────────────────────────────────────────────────────────
 
+// Sections accessibles depuis la feuille « Plus » plutôt que depuis la barre
+// basse. Doit rester aligné avec le markup de #more-sheet dans index.html.
+const SHEET_SECTIONS = new Set(['history', 'profil', 'progression', 'explication', 'settings']);
+
+const MOBILE_QUERY = window.matchMedia('(max-width: 768px)');
+
+function isMobile() {
+  return MOBILE_QUERY.matches;
+}
+
+function openSheet() {
+  const sheet = document.getElementById('more-sheet');
+  const backdrop = document.getElementById('more-sheet-backdrop');
+  const btn = document.getElementById('more-btn');
+  if (!sheet || !backdrop) return;
+  sheet.hidden = false;
+  backdrop.hidden = false;
+  if (btn) btn.setAttribute('aria-expanded', 'true');
+}
+
+function closeSheet() {
+  const sheet = document.getElementById('more-sheet');
+  const backdrop = document.getElementById('more-sheet-backdrop');
+  const btn = document.getElementById('more-btn');
+  if (!sheet || !backdrop) return;
+  sheet.hidden = true;
+  backdrop.hidden = true;
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+
+/**
+ * Déplace le sélecteur Run/Vélo et le switch de langue entre le header (desktop)
+ * et la feuille « Plus » (mobile). On déplace les nœuds existants au lieu de les
+ * dupliquer : les écouteurs suivent, et il n'y a jamais deux éléments portant le
+ * même identifiant.
+ */
+function placeSharedControls() {
+  const sheetSlot = document.getElementById('sheet-controls');
+  const metaSlot = document.getElementById('sheet-meta');
+  const nav = document.querySelector('.ca-nav');
+  const headerMeta = document.querySelector('.ca-header-meta');
+  const sport = document.querySelector('.ca-sport-selector');
+  const lang = document.querySelector('.ca-lang-switch');
+  if (!sheetSlot || !metaSlot || !nav || !headerMeta) return;
+
+  // Les textes d'état du header : lisibles au calme dans la feuille, ils se
+  // marchaient dessus à côté des boutons sur un écran de 390 px.
+  const info = ['header-user', 'header-date', 'header-count', 'header-sync']
+    .map(id => document.getElementById(id))
+    .filter(Boolean);
+  const syncBtn = document.getElementById('sync-btn');
+
+  if (isMobile()) {
+    info.forEach(n => { if (n.parentElement !== metaSlot) metaSlot.appendChild(n); });
+    if (sport && sport.parentElement !== sheetSlot) sheetSlot.appendChild(sport);
+    if (lang && lang.parentElement !== sheetSlot) sheetSlot.appendChild(lang);
+  } else {
+    // Ordre d'origine du header : user, date, count, sync, puis les boutons.
+    info.forEach(n => { if (n.parentElement !== headerMeta) headerMeta.insertBefore(n, syncBtn); });
+    if (sport && sport.parentElement !== nav) nav.appendChild(sport);
+    if (lang && lang.parentElement !== headerMeta) headerMeta.appendChild(lang);
+  }
+}
+
+/**
+ * Expose au CSS deux mesures que les media queries ne peuvent pas calculer :
+ * la largeur de la barre de défilement (sans quoi .cg-fullpage en 100vw déborde)
+ * et la hauteur réelle du header + nav.
+ */
+function measureChrome() {
+  const root = document.documentElement;
+  root.style.setProperty('--sbw', `${window.innerWidth - root.clientWidth}px`);
+  const header = document.querySelector('.ca-header');
+  const nav = document.querySelector('.ca-nav');
+  const h = (header ? header.offsetHeight : 0) + (nav && nav.offsetHeight ? nav.offsetHeight : 0);
+  if (h) root.style.setProperty('--chrome-h', `${h}px`);
+}
+
 function navigate(section) {
   if (!SECTIONS[section]) section = 'overview';
   _currentSection = section;
 
-  document.querySelectorAll('.ca-nav-tab').forEach(tab => {
+  // Les deux barres (haut desktop, basse mobile) et les liens de la feuille
+  // portent tous data-section : un seul balayage les maintient en phase.
+  document.querySelectorAll('.ca-nav-tab, .ca-bnav-tab').forEach(tab => {
     tab.classList.toggle('active', tab.dataset.section === section);
   });
+  // « Plus » s'allume quand la section courante vit dans la feuille.
+  const moreBtn = document.getElementById('more-btn');
+  if (moreBtn) moreBtn.classList.toggle('active', SHEET_SECTIONS.has(section));
+  closeSheet();
 
   window.location.hash = section;
 
@@ -386,6 +473,62 @@ function initLangSwitch() {
   applyI18nToDom();
 }
 
+/** Écouteurs de la coquille applicative : navigation, sport, sync, mobile. */
+function initShell() {
+  // Barre du haut, barre basse et liens de la feuille partagent data-section.
+  document.querySelectorAll('.ca-nav-tab, .ca-bnav-tab[data-section]').forEach(tab => {
+    tab.addEventListener('click', () => navigate(tab.dataset.section));
+  });
+
+  // Sport selector
+  document.querySelectorAll('.ca-sport-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      setCurrentSport(btn.dataset.sport);
+      document.querySelectorAll('.ca-sport-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      navigate(_currentSection); // re-render current section with new sport
+    });
+  });
+
+  const syncBtn = document.getElementById('sync-btn');
+  if (syncBtn) syncBtn.addEventListener('click', () => triggerSync());
+
+  const logoutBtn = document.getElementById('logout-btn');
+  if (logoutBtn) logoutBtn.addEventListener('click', () => logout());
+
+  // Feuille « Plus »
+  const moreBtn = document.getElementById('more-btn');
+  const backdrop = document.getElementById('more-sheet-backdrop');
+  if (moreBtn) {
+    moreBtn.addEventListener('click', () => {
+      const sheet = document.getElementById('more-sheet');
+      if (sheet && sheet.hidden) openSheet(); else closeSheet();
+    });
+  }
+  if (backdrop) backdrop.addEventListener('click', () => closeSheet());
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeSheet();
+  });
+
+  placeSharedControls();
+  measureChrome();
+
+  // Un seul écouteur de redimensionnement pour toute l'application : les cartes
+  // Leaflet et les graphes Plotly ne se recalculent pas tout seuls, et rien
+  // n'écoutait la rotation de l'écran jusqu'ici.
+  let resizeTimer = null;
+  const onResize = () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      placeSharedControls();
+      measureChrome();
+      window.dispatchEvent(new CustomEvent('ca:resize'));
+    }, 150);
+  };
+  window.addEventListener('resize', onResize);
+  window.addEventListener('orientationchange', onResize);
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   initAuthForms();
   applyI18nToDom();
@@ -400,30 +543,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Check existing session
   const authenticated = await checkSession();
 
+  // Les écouteurs de la coquille sont posés une seule fois, quel que soit le
+  // chemin d'authentification : le markup existe déjà dans les deux cas.
+  initShell();
+
   if (authenticated) {
-    // Nav clicks
-    document.querySelectorAll('.ca-nav-tab').forEach(tab => {
-      tab.addEventListener('click', () => navigate(tab.dataset.section));
-    });
-
-    // Sport selector
-    document.querySelectorAll('.ca-sport-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        setCurrentSport(btn.dataset.sport);
-        document.querySelectorAll('.ca-sport-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        navigate(_currentSection); // re-render current section with new sport
-      });
-    });
-
-    // Sync button
-    const syncBtn = document.getElementById('sync-btn');
-    if (syncBtn) syncBtn.addEventListener('click', () => triggerSync());
-
-    // Logout button
-    const logoutBtn = document.getElementById('logout-btn');
-    if (logoutBtn) logoutBtn.addEventListener('click', () => logout());
-
     // Hash routing (strip query params: #settings?strava=connected → settings)
     const hash = window.location.hash.slice(1).split('?')[0];
     const initial = SECTIONS[hash] ? hash : 'overview';
@@ -432,15 +556,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     initSync();
     navigate(initial);
     maybeShowStravaOnboarding();
-  } else {
-    // Still wire nav for after login
-    document.querySelectorAll('.ca-nav-tab').forEach(tab => {
-      tab.addEventListener('click', () => navigate(tab.dataset.section));
-    });
-    const syncBtn = document.getElementById('sync-btn');
-    if (syncBtn) syncBtn.addEventListener('click', () => triggerSync());
-    const logoutBtn = document.getElementById('logout-btn');
-    if (logoutBtn) logoutBtn.addEventListener('click', () => logout());
   }
 });
 

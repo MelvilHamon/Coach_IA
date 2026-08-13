@@ -292,10 +292,16 @@ async function loadActivity(actId, target) {
         const clearBtn = el('button', { className: 'ca-btn', style: { fontSize: '11px', padding: '4px 10px' } }, t('analyse.clearAll'));
         const modeLabel = el('span', { style: { fontSize: '11px', color: 'var(--ink-mid)', fontStyle: 'italic' } });
 
-        const toolbar = el('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap' } },
-          addEffortBtn, stopBtn, clearBtn, modeLabel,
-        );
+        // La sélection de blocs se fait au glisser de souris sur le graphe
+        // (charts.js:enableBlockSelect) : intransposable au doigt en l'état. On
+        // masque la barre d'outils sur mobile plutôt que d'offrir un bouton qui
+        // ne mène nulle part, et on dit où la trouver.
+        const toolbar = el('div', {
+          className: 'ca-block-toolbar',
+          style: { display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap' },
+        }, addEffortBtn, stopBtn, clearBtn, modeLabel);
         profileSection.appendChild(toolbar);
+        profileSection.appendChild(el('div', { className: 'ca-block-hint' }, t('analyse.blocksDesktopOnly')));
 
         // Speed chart
         const speedEl = el('div', { className: 'ca-chart-card', style: { marginBottom: '8px' } },

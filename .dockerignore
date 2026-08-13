@@ -7,7 +7,11 @@ __pycache__/
 .gitignore
 .claude/
 .garth/
-data/
+# Comme dans .gitignore : on exclut le CONTENU de data/ (data/*) plutôt que le
+# dossier lui-même, pour pouvoir ré-inclure le référentiel des stades que le
+# Dockerfile embarque dans l'image (COPY data/stades_athle.json).
+data/*
+!data/stades_athle.json
 config.json
 objectif.txt
 Contexte.md

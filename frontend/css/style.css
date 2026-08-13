@@ -26,6 +26,29 @@
 
   --radius:     2px;
   --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Espacements — échelle 4px, utilisée pour les rythmes verticaux partagés. */
+  --sp-1: 4px;   --sp-2: 8px;   --sp-3: 12px;  --sp-4: 16px;
+  --sp-5: 24px;  --sp-6: 32px;  --sp-7: 48px;  --sp-8: 64px;
+
+  /* Tailles de texte. Les trois premières sont fixes (données, labels), les
+     trois dernières fluides : elles portent la hiérarchie et doivent respirer
+     entre un iPhone SE et un 27 pouces. */
+  --fs-xs:   11px;
+  --fs-sm:   12px;
+  --fs-base: 13px;
+  --fs-md:   clamp(15px, 1.2vw + 11px, 18px);
+  --fs-lg:   clamp(20px, 2vw + 12px, 26px);
+  --fs-xl:   clamp(28px, 5vw + 12px, 54px);
+
+  /* Marge horizontale de page en mobile uniquement : au-dessus de 768px,
+     l'échelle d'origine (48px, 64px ≥1440, 36px ≤1400, 24px ≤1024) est
+     conservée telle quelle sur les composants. */
+  --gutter:  clamp(16px, 4vw, 24px);
+  /* Cible tactile minimale (recommandation WCAG 2.5.5 / iOS HIG). */
+  --tap:     44px;
+  /* Hauteur de la barre de navigation basse mobile. */
+  --nav-h:   58px;
 }
 
 html, body {
@@ -34,10 +57,9 @@ html, body {
   color: var(--ink);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  min-height: 100vh;
+  min-height: 100dvh;
   font-size: 14px;
   line-height: 1.6;
-  overflow-x: hidden;
 }
 
 /* ── Header ── */
@@ -291,7 +313,7 @@ html, body {
 
 .ca-metric-value {
   font-family: var(--font-display);
-  font-size: 54px;
+  font-size: var(--fs-xl);
   font-weight: 300;
   line-height: 1;
   color: var(--ink);
@@ -398,7 +420,7 @@ html, body {
 }
 
 .ca-dist-label {
-  width: 180px;
+  width: clamp(88px, 30vw, 180px);
   font-size: 12px;
   color: var(--ink-mid);
   text-align: right;
@@ -500,7 +522,8 @@ html, body {
   padding: 10px 36px 10px 14px;
   appearance: none;
   cursor: pointer;
-  min-width: 320px;
+  min-width: min(320px, 100%);
+  max-width: 100%;
   transition: border-color var(--transition);
 }
 
@@ -626,10 +649,32 @@ html, body {
 
 .ca-map-container {
   width: 100%;
-  height: 520px;
+  /* 520px fixes prenaient plus de 60% d'un écran de téléphone. */
+  height: clamp(240px, 45vh, 520px);
   border-radius: var(--radius);
   overflow: hidden;
   background: var(--bg-card);
+  position: relative;
+}
+
+/* Voile posé par mapmobile.js : laisse le doigt faire défiler la page tant que
+   l'utilisateur n'a pas explicitement demandé à manipuler la carte. */
+.ca-map-guard {
+  position: absolute;
+  inset: 0;
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(20, 20, 20, 0.28);
+  color: #FFFFFF;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-align: center;
+  padding: var(--sp-4);
+  cursor: pointer;
 }
 
 .ca-map-container .leaflet-control-attribution {
@@ -855,7 +900,7 @@ html, body {
 /* ── Auth page ── */
 
 .ca-auth-page {
-  min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1062,13 +1107,16 @@ html, body {
 
 /* Full-page wrapper — breaks out of ca-main constraints */
 .cg-fullpage {
-  /* Use viewport-relative positioning to break out of max-width parent */
-  width: 100vw;
-  margin-left: calc(-50vw + 50%);
+  /* Sort de la contrainte max-width du parent. --sbw (largeur de la barre de
+     défilement, posée par app.js) évite que 100vw déborde de cette largeur. */
+  width: calc(100vw - var(--sbw, 0px));
+  margin-left: calc(50% - (100vw - var(--sbw, 0px)) / 2);
+  /* Annule le padding de .ca-main (suivi par breakpoint plus bas). */
   margin-top: -32px;
   margin-bottom: -80px;
   padding: 12px 48px 16px;
-  min-height: calc(100vh - 120px); /* header + nav approx */
+  /* --chrome-h = hauteur réelle header + nav, mesurée par app.js. */
+  min-height: calc(100dvh - var(--chrome-h, 120px));
   display: flex;
   flex-direction: column;
 }
@@ -1340,6 +1388,80 @@ html, body {
   color: var(--accent);
 }
 
+/* ── Vue agenda (mobile) ── */
+
+.cg-agenda { display: flex; flex-direction: column; }
+
+.cg-agenda-week {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg);
+  padding: var(--sp-3) 0 var(--sp-2);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-light);
+}
+
+.cg-agenda-week-tot { color: var(--ink-mid); }
+
+.cg-agenda-day {
+  display: flex;
+  gap: var(--sp-4);
+  padding: var(--sp-3) 0;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.cg-agenda-date {
+  flex: 0 0 34px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.1;
+}
+
+.cg-agenda-dow {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-light);
+}
+
+.cg-agenda-num {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 300;
+  color: var(--ink);
+}
+
+.cg-agenda-today .cg-agenda-num {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.cg-agenda-items { flex: 1; min-width: 0; }
+
+/* Les lignes d'activité viennent de la vue mois : elles y sont compressées à
+   19px de haut pour tenir dans une cellule. En agenda, la place ne manque pas. */
+.cg-agenda-items .cg-act-line {
+  height: auto;
+  min-height: var(--tap);
+  align-items: center;
+  padding: var(--sp-2) var(--sp-3);
+  margin-bottom: var(--sp-1);
+  font-size: var(--fs-sm);
+}
+
+.cg-agenda-items .cg-act-label { white-space: normal; }
+
 /* ── Modal overlay ── */
 .cg-modal-overlay {
   position: fixed;
@@ -1356,10 +1478,12 @@ html, body {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 28px 32px;
-  min-width: 380px;
+  /* Pas de min-width en dur : sur un iPhone SE (375px) elle l'emportait sur
+     width:90vw et faisait déborder le formulaire. */
+  min-width: min(380px, 100%);
   max-width: 520px;
   width: 90vw;
-  max-height: 90vh;
+  max-height: 90dvh;
   overflow-y: auto;
   box-shadow: 0 12px 40px rgba(0,0,0,0.15);
 }
@@ -1679,7 +1803,12 @@ textarea.ca-input {
   text-align: center;
 }
 
-/* ── Responsive ── */
+/* ══════════════════════════════════════════════════════════════════════════════
+   Responsive
+   Les paddings horizontaux passent tous par --gutter, il n'y a donc plus
+   d'override de marge par breakpoint. Ce qui reste ici change la *structure* :
+   nombre de colonnes, orientation, densité.
+   ══════════════════════════════════════════════════════════════════════════════ */
 
 @media (min-width: 1600px) {
   .ca-two-col { grid-template-columns: 2fr 3fr; }
@@ -1701,16 +1830,379 @@ textarea.ca-input {
   .ca-main { padding: 24px 24px 60px; }
   .ca-metrics-row { flex-direction: column; gap: 16px; }
   .ca-two-col { grid-template-columns: 1fr; }
-  .ca-select { min-width: 100%; }
   .cg-fullpage { margin-top: -24px; margin-bottom: -60px; padding: 10px 28px 12px; }
 }
 
-@media (max-width: 640px) {
-  .ca-header-inner { flex-direction: column; gap: 8px; }
-  .ca-nav-tab { padding: 12px 16px; }
-  .ca-sport-selector { margin-left: 0; }
-  .cg-fullpage { padding: 8px 16px 10px; }
-  .cg-month-label { font-size: 18px; min-width: 150px; }
+.ca-block-hint {
+  display: none;
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  color: var(--ink-mid);
+  font-style: italic;
+  margin-bottom: var(--sp-2);
+}
+
+@media (max-width: 768px) {
+  .ca-block-hint { display: block; }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Mobile — navigation basse et feuille « Plus »
+   La barre du haut disparaît sous 769px : neuf onglets en défilement horizontal
+   sans indicateur ne sont pas navigables au pouce. La barre basse expose les
+   quatre rubriques quotidiennes ; le reste vit dans la feuille.
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+.ca-bottom-nav { display: none; }
+
+.ca-bnav-tab svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ca-bnav-tab svg circle { fill: currentColor; stroke: none; }
+
+@media (max-width: 768px) {
+
+  /* ── Barre basse ── */
+
+  .ca-nav { display: none; }
+
+  .ca-bottom-nav {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 900;
+    background: var(--bg-card);
+    border-top: 1px solid var(--border);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .ca-bnav-tab {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--sp-1);
+    min-height: var(--nav-h);
+    padding: var(--sp-2) var(--sp-1);
+    background: none;
+    border: none;
+    border-top: 2px solid transparent;
+    margin-top: -1px;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-light);
+    cursor: pointer;
+    transition: color var(--transition), border-color var(--transition);
+  }
+
+  .ca-bnav-tab.active {
+    color: var(--accent);
+    border-top-color: var(--accent);
+  }
+
+  /* Laisse la place à la barre basse sous le contenu. */
+  .ca-main {
+    padding: var(--sp-5) var(--gutter)
+             calc(var(--nav-h) + var(--sp-7) + env(safe-area-inset-bottom, 0px));
+  }
+  .cg-fullpage { margin-top: calc(-1 * var(--sp-5)); padding: var(--sp-3) var(--gutter) var(--sp-4); }
+  /* Deux cartes par ligne : l'empilement hérité du palier 1024px donnait
+     quatre écrans de défilement avant le premier graphe. */
+  .ca-metrics-row { flex-direction: row; }
+
+  /* ── Header allégé ── */
+
+  .ca-header { padding: var(--sp-3) var(--gutter); }
+  .ca-header-inner { align-items: center; gap: var(--sp-3); }
+  .ca-header-title {
+    font-size: 18px;
+    display: flex;
+    align-items: center;
+    white-space: nowrap;
+  }
+  .ca-strava-badge-header { height: 15px; margin-left: var(--sp-2); }
+  .ca-header-meta { gap: var(--sp-1); align-items: center; flex-shrink: 0; }
+  /* Nom, date et compteur passent dans la feuille : le header garde l'état de
+     synchro, la seule information qu'on consulte en un coup d'œil. */
+  .ca-header-meta > #header-user,
+  .ca-header-meta > #header-date,
+  .ca-header-meta > #header-count { display: none; }
+  .ca-sync-btn { width: var(--tap); height: var(--tap); font-size: 17px; }
+
+  /* Bloc d'état en tête de feuille : nom, date, nombre d'activités, synchro. */
+  .ca-sheet-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-1) var(--sp-4);
+    font-size: var(--fs-xs);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-mid);
+    padding-bottom: var(--sp-4);
+    margin-bottom: var(--sp-3);
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* ── Cartes de métriques : deux par ligne ──
+     Une par ligne (l'ancien comportement) donnait quatre écrans de défilement
+     avant le premier graphe. */
+  .ca-metrics-row {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--sp-4) var(--sp-5);
+    margin-bottom: var(--sp-6);
+  }
+  .ca-metric-card { min-width: 0; padding: var(--sp-3) 0; }
+  .ca-metric-label { font-size: 9px; letter-spacing: 0.1em; margin-bottom: var(--sp-2); }
+  .ca-metric-explain { font-size: var(--fs-xs); line-height: 1.5; }
+
+  /* ── Calendrier ── */
+
+  /* La barre du haut passe en deux rangées : navigation, puis actions. */
+  .cg-control-bar { gap: var(--sp-3); }
+  .cg-control-left { width: 100%; justify-content: space-between; }
+  .cg-control-bar > div:last-child { width: 100%; flex-wrap: wrap; }
+  .cg-month-label { font-size: 17px; min-width: 0; flex: 1; }
+  .cg-control-bar .ca-btn { min-height: var(--tap); }
+
+  /* Le calendrier n'a plus à simuler une pleine page : le contenu défile. */
+  .cg-fullpage { min-height: 0; }
+
+  /* Popup du jour : ancré en bas plutôt qu'à côté d'une cellule, qui le
+     poussait hors de l'écran dès la fin de semaine. */
+  .cg-popup {
+    position: fixed;
+    top: auto !important;
+    bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px)) !important;
+    left: 0 !important;
+    right: 0 !important;
+    z-index: 940;
+    min-width: 0;
+    max-width: none;
+    max-height: 62dvh;
+    overflow-y: auto;
+    border-radius: 12px 12px 0 0;
+    padding: var(--sp-4) var(--gutter);
+    box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.18);
+  }
+
+  .cg-popup-edit, .cg-popup-del, .cg-act-del {
+    min-height: var(--tap);
+    min-width: var(--tap);
+    padding-inline: var(--sp-3);
+  }
+
+  /* Modal de séance : feuille plein écran, champs à hauteur tactile. */
+  .cg-modal {
+    width: 100%;
+    max-width: none;
+    max-height: 100dvh;
+    height: 100dvh;
+    border: none;
+    border-radius: 0;
+    padding: var(--sp-5) var(--gutter) calc(var(--sp-7) + env(safe-area-inset-bottom, 0px));
+  }
+
+  .cg-modal input,
+  .cg-modal select,
+  .cg-modal textarea { min-height: var(--tap); width: 100%; max-width: 100%; }
+
+  /* Sélection de blocs : souris uniquement (voir analyse.js). */
+  .ca-block-toolbar { display: none !important; }
+
+  /* ── Contrôles : cibles tactiles et pleine largeur ── */
+
+  .ca-select-wrap { display: block; width: 100%; }
+  .ca-select { width: 100%; min-height: var(--tap); }
+  .ca-btn { min-height: var(--tap); padding-inline: var(--sp-5); }
+  .ca-radio-btn { min-height: var(--tap); padding-inline: var(--sp-5); }
+  .ca-radio-group { display: flex; }
+  .ca-radio-group .ca-radio-btn { flex: 1; }
+  .ca-collapsible-toggle,
+  .ca-subtab,
+  .ca-input { min-height: var(--tap); }
+
+  /* Tables de records : quatre colonnes tiennent, mais pas avec 14px de
+     rembourrage horizontal de chaque côté. */
+  .ca-records-table th,
+  .ca-records-table td { padding-inline: var(--sp-2); }
+
+  /* Plusieurs sections posent des largeurs de champ en style inline (130px,
+     160px, 200px…) : le style inline bat la feuille, d'où le !important. */
+  .ca-main input,
+  .ca-main select,
+  .ca-main textarea { max-width: 100% !important; }
+
+  /* Les commandes de zoom de Leaflet font 30px : sous le seuil tactile. */
+  .leaflet-touch .leaflet-bar a,
+  .leaflet-control-zoom a {
+    width: 38px;
+    height: 38px;
+    line-height: 38px;
+  }
+
+  /* ── Tableaux en cartes ──
+     Huit colonnes sur 390 px imposaient un défilement horizontal sans repère.
+     Chaque ligne devient une carte, chaque cellule porte son étiquette de
+     colonne (data-label posé par tableWrap()). */
+
+  .ca-cards thead { display: none; }
+
+  .ca-cards .ca-table,
+  .ca-cards tbody,
+  .ca-cards tr,
+  .ca-cards td {
+    display: block;
+    width: 100%;
+  }
+
+  .ca-cards tr {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    padding: var(--sp-3) var(--sp-4);
+    margin-bottom: var(--sp-3);
+  }
+
+  .ca-cards tr:hover td { background: none; }
+
+  .ca-cards td {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--sp-4);
+    padding: var(--sp-1) 0;
+    border-bottom: none;
+    /* Les alignements à droite sont posés en style inline par les sections :
+       il faut les neutraliser pour la mise en page en deux colonnes. */
+    text-align: left !important;
+  }
+
+  .ca-cards td::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-light);
+  }
+
+  /* Cellules vides (lignes de total) : pas d'étiquette orpheline. */
+  .ca-cards td:empty { display: none; }
+
+  /* Colonne titre : en tête de carte, sans étiquette. */
+  .ca-cards td.ca-td-primary {
+    display: block;
+    padding: 0 0 var(--sp-2);
+    margin-bottom: var(--sp-2);
+    border-bottom: 1px solid var(--border);
+    color: var(--ink);
+    font-size: var(--fs-base);
+  }
+
+  .ca-cards td.ca-td-primary::before { content: none; }
+
+  /* ── Feuille « Plus » ── */
+
+  .ca-sheet-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 950;
+    background: rgba(20, 20, 20, 0.45);
+    animation: fadeIn 0.2s ease;
+  }
+
+  .ca-sheet {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 960;
+    background: var(--bg-card);
+    border-top: 1px solid var(--border);
+    border-radius: 12px 12px 0 0;
+    padding: var(--sp-2) var(--gutter) calc(var(--sp-5) + env(safe-area-inset-bottom, 0px));
+    max-height: 80dvh;
+    overflow-y: auto;
+    box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.18);
+    animation: sheetUp 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .ca-sheet-handle {
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border);
+    margin: var(--sp-2) auto var(--sp-4);
+  }
+
+  .ca-sheet-title {
+    font-family: var(--font-display);
+    font-size: var(--fs-sm);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-light);
+    margin-bottom: var(--sp-2);
+  }
+
+  .ca-sheet-links { display: flex; flex-direction: column; }
+
+  .ca-sheet-link {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    min-height: var(--tap);
+    padding: var(--sp-3) 0;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    border-top: none;
+    margin-top: 0;
+    font-size: var(--fs-base);
+    letter-spacing: 0.04em;
+    text-transform: none;
+    color: var(--ink);
+  }
+
+  .ca-sheet-link.active { color: var(--accent); border-top: none; }
+
+  .ca-sheet-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--sp-4);
+    padding-top: var(--sp-4);
+  }
+
+  .ca-sheet-controls .ca-sport-selector { margin-left: 0; padding: 0; }
+  .ca-sheet-controls .ca-lang-switch { margin-left: 0; }
+  .ca-sheet-controls .ca-sport-btn,
+  .ca-sheet-controls .ca-lang-btn { min-height: var(--tap); padding-inline: var(--sp-4); }
+}
+
+@keyframes sheetUp {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* ── Strava onboarding modal ── */

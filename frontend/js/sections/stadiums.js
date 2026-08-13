@@ -5,6 +5,7 @@
 import { api } from '../api.js';
 import { el, sectionTitle, loading, empty, fmt, fmtDate } from '../components.js';
 import { setPendingActivityId } from '../state.js';
+import { attachMapMobile } from '../mapmobile.js';
 import { t } from '../i18n.js';
 
 const SAT_TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
@@ -28,9 +29,14 @@ export async function renderStadiums(container) {
     _miniMaps.clear();
 
     if (!stadiums.length) {
+      // res.error === 'no_reference' : le référentiel national n'est pas dans
+      // l'image serveur. Rien à voir avec un athlète qui n'a jamais couru en
+      // stade — le message doit envoyer sur la bonne piste.
       const section = el('div', { className: 'ca-section' },
         sectionTitle(t('nav.stadiums')),
-        empty('Aucun stade détecté pour l\'instant.'),
+        empty(res.error === 'no_reference'
+          ? 'Référentiel des stades indisponible côté serveur. Les stades ne peuvent pas être détectés.'
+          : 'Aucun stade détecté pour l\'instant.'),
       );
       container.appendChild(section);
       return;
@@ -43,7 +49,7 @@ export async function renderStadiums(container) {
     // Defer Leaflet init until DOM is mounted
     requestAnimationFrame(() => {
       _initBigMap(stadiums);
-      stadiums.forEach(s => _initMiniMap(s));
+      stadiums.forEach(s => _observeMiniMap(s));
     });
   } catch (err) {
     container.innerHTML = '';
@@ -178,7 +184,8 @@ function _renderMap(stadiums) {
   const mapEl = el('div', {
     id: 'stadiums-bigmap',
     style: {
-      height: '380px',
+      // 380px fixes couvraient la moitié d'un écran de téléphone.
+      height: 'clamp(220px, 40vh, 380px)',
       width: '100%',
       borderRadius: '4px',
       border: '1px solid var(--border)',
@@ -201,6 +208,7 @@ function _initBigMap(stadiums) {
   }
 
   const map = L.map(mapEl, { zoomControl: true, scrollWheelZoom: false });
+  attachMapMobile(map, mapEl, t('map.tapToExplore'));
   L.tileLayer(SAT_TILES, { attribution: SAT_ATTR, maxZoom: 19 }).addTo(map);
   L.tileLayer(LABEL_TILES, { subdomains: 'abcd', maxZoom: 19, opacity: 0.85 }).addTo(map);
 
@@ -269,7 +277,8 @@ function _renderGrid(stadiums) {
   const grid = el('div', {
     style: {
       display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
+      // min() plutôt que 340px sec : sinon la grille déborde sur un écran de 360px.
+      gridTemplateColumns: 'repeat(auto-fill, minmax(min(340px, 100%), 1fr))',
       gap: '20px',
     },
   });
@@ -415,9 +424,30 @@ function _pillBadge(text, color) {
   }, text);
 }
 
+/**
+ * Observe la carte d'un stade et n'instancie sa mini-carte qu'à l'approche du
+ * viewport. Sur mobile la grille est mono-colonne : sans ça, on créait autant
+ * d'instances Leaflet que de stades, toutes hors écran.
+ */
+function _observeMiniMap(s) {
+  const target = document.getElementById(`stadium-mini-${s.id}`);
+  if (!target) return;
+  if (typeof IntersectionObserver === 'undefined') { _initMiniMap(s); return; }
+
+  const io = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      io.disconnect();
+      _initMiniMap(s);
+    }
+  }, { rootMargin: '200px' });
+  io.observe(target);
+}
+
 function _initMiniMap(s) {
   if (typeof L === 'undefined') return;
   if (s.lat == null || s.lon == null) return;
+  if (_miniMaps.has(s.id)) return;
   const target = document.getElementById(`stadium-mini-${s.id}`);
   if (!target) return;
 
@@ -444,7 +474,7 @@ async function _openStadiumDetail(s) {
       position: 'fixed', inset: 0, zIndex: 10000,
       background: 'rgba(0,0,0,0.6)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
-      padding: '20px',
+      padding: 'clamp(0px, 3vw, 20px)',
     },
     onClick: (e) => { if (e.target === e.currentTarget) overlay.remove(); },
   });
@@ -453,7 +483,7 @@ async function _openStadiumDetail(s) {
     style: {
       background: 'var(--bg)',
       maxWidth: '900px', width: '100%',
-      maxHeight: '92vh',
+      maxHeight: '92dvh',
       borderRadius: '6px',
       overflow: 'hidden',
       display: 'flex', flexDirection: 'column',
@@ -463,7 +493,7 @@ async function _openStadiumDetail(s) {
 
   // Header with satellite hero
   const heroId = `stadium-detail-hero-${s.id}`;
-  const hero = el('div', { style: { position: 'relative', height: '200px', background: '#2d2d2d', flex: 'none' } });
+  const hero = el('div', { style: { position: 'relative', height: 'clamp(120px, 25vh, 200px)', background: '#2d2d2d', flex: 'none' } });
   hero.appendChild(el('div', { id: heroId, style: { height: '100%', width: '100%', pointerEvents: 'none' } }));
   hero.appendChild(el('div', {
     style: {

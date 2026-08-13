@@ -10,6 +10,9 @@
  *   - Dénivelé : bleu (descente) → blanc (plat) → orange (montée)
  */
 
+import { attachMapMobile } from './mapmobile.js';
+import { t } from './i18n.js';
+
 let _currentMap = null;
 
 const TILES = {
@@ -365,4 +368,5 @@ export function renderMap(container, points) {
   if (parent) parent.insertBefore(controlsEl, container);
 
   _currentMap = map;
+  attachMapMobile(map, container, t('map.tapToExplore'));
 }

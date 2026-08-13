@@ -65,6 +65,35 @@ export function metricCard(label, value, unit = '', { status = 'neutral', explai
   return card;
 }
 
+// ── Table ───────────────────────────────────────────────────────────────────
+
+/**
+ * Enveloppe un tableau et le prépare pour l'affichage en cartes sur mobile.
+ *
+ * Chaque cellule reçoit un data-label repris de son en-tête de colonne ; sous
+ * 768px le CSS masque le thead et empile les cellules, l'étiquette servant de
+ * libellé. Une seule construction de tableau, deux rendus — et les libellés
+ * suivent automatiquement si l'ordre des colonnes change.
+ *
+ * @param {HTMLElement} thead
+ * @param {HTMLElement} tbody
+ * @param {{primary?: number}} opts  index de la colonne qui sert de titre de carte
+ */
+export function tableWrap(thead, tbody, { primary = 0 } = {}) {
+  const headers = [...(thead.querySelector('tr')?.children || [])].map(th => th.textContent.trim());
+
+  for (const tr of tbody.querySelectorAll('tr')) {
+    [...tr.children].forEach((td, i) => {
+      if (headers[i]) td.dataset.label = headers[i];
+      if (i === primary) td.classList.add('ca-td-primary');
+    });
+  }
+
+  return el('div', { className: 'ca-table-wrap ca-cards' },
+    el('table', { className: 'ca-table' }, thead, tbody),
+  );
+}
+
 // ── Badge ───────────────────────────────────────────────────────────────────
 
 const BADGE_CLASSES = {

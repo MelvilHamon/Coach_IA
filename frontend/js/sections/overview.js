@@ -5,7 +5,7 @@
 import { api } from '../api.js';
 import {
   el, metricCard, sectionTitle, distBar, fmt, fmtDate, loading, empty,
-  acwrStatus, badge, weeklyReviewBox,
+  acwrStatus, badge, weeklyReviewBox, tableWrap,
 } from '../components.js';
 import { plotVolume, plotPolarizedBar } from '../charts.js';
 import { getCurrentSport, setPendingActivityId } from '../state.js';
@@ -149,9 +149,9 @@ function _buildPolarizedBlock(activities, weekMonday) {
     el('td', { style: { textAlign: 'right' } }, fmtPct(pctSeuil)),
   ));
 
-  const table = el('div', { className: 'ca-table-wrap', style: { marginTop: '24px' } },
-    el('table', { className: 'ca-table' }, thead, tbody),
-  );
+  // primary: 0 → le nom de la séance sert de titre de carte sur mobile.
+  const table = tableWrap(thead, tbody, { primary: 0 });
+  table.style.marginTop = '24px';
 
   const wrapper = el('div', {}, barCard, table);
 

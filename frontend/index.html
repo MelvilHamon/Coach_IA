@@ -89,6 +89,53 @@
       <div class="ca-loading" data-i18n="common.loading">Chargement…</div>
     </main>
 
+    <!-- Navigation basse (mobile uniquement — .ca-nav prend le relais dès 769px).
+         Les data-section reprennent les mêmes clés que la nav du haut : navigate()
+         synchronise les deux barres. -->
+    <nav class="ca-bottom-nav" aria-label="Navigation principale">
+      <button class="ca-bnav-tab active" data-section="overview">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V11M9.5 19V5M15 19V14M20.5 19V8"/></svg>
+        <span data-i18n="nav.shortOverview">Résumé</span>
+      </button>
+      <button class="ca-bnav-tab" data-section="calendrier">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>
+        <span data-i18n="nav.shortCalendrier">Agenda</span>
+      </button>
+      <button class="ca-bnav-tab" data-section="analyse">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 14h3.5l2.5-7 3 13 2.5-9 2 3H21"/></svg>
+        <span data-i18n="nav.shortAnalyse">Analyse</span>
+      </button>
+      <button class="ca-bnav-tab" data-section="stadiums">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="6.5" width="19" height="11" rx="5.5"/><rect x="7" y="10" width="10" height="4" rx="2"/></svg>
+        <span data-i18n="nav.shortStadiums">Stades</span>
+      </button>
+      <button class="ca-bnav-tab ca-bnav-more" id="more-btn" aria-expanded="false" aria-controls="more-sheet">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5.5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18.5" cy="12" r="1.2"/></svg>
+        <span data-i18n="nav.more">Plus</span>
+      </button>
+    </nav>
+
+    <!-- Feuille « Plus » : sections secondaires + réglages déplacés du header -->
+    <div id="more-sheet-backdrop" class="ca-sheet-backdrop" hidden></div>
+    <div id="more-sheet" class="ca-sheet" role="dialog" aria-modal="true" aria-labelledby="more-sheet-title" hidden>
+      <div class="ca-sheet-handle" aria-hidden="true"></div>
+      <!-- app.js y déplace nom, date, nombre d'activités et fraîcheur de synchro
+           sous 768px : le header mobile ne garde que le logo et les deux boutons. -->
+      <div class="ca-sheet-meta" id="sheet-meta"></div>
+      <div class="ca-sheet-title" id="more-sheet-title" data-i18n="nav.moreTitle">Autres rubriques</div>
+      <div class="ca-sheet-links">
+        <button class="ca-bnav-tab ca-sheet-link" data-section="history" data-i18n="nav.history">Historique</button>
+        <button class="ca-bnav-tab ca-sheet-link" data-section="profil" data-i18n="nav.profil">Profil</button>
+        <button class="ca-bnav-tab ca-sheet-link" data-section="progression" data-i18n="nav.progression">Progression</button>
+        <button class="ca-bnav-tab ca-sheet-link" data-section="explication" data-i18n="nav.explication">Métriques</button>
+        <button class="ca-bnav-tab ca-sheet-link" data-section="settings" data-i18n="nav.settings">Paramètres</button>
+      </div>
+      <!-- app.js y déplace le sélecteur Run/Vélo et le switch FR/EN sous 768px,
+           et les remet dans le header au-dessus. Un seul exemplaire de chaque :
+           pas d'ID dupliqué, pas de listener à recâbler. -->
+      <div class="ca-sheet-controls" id="sheet-controls"></div>
+    </div>
+
   </div>
 
   <!-- ══════ Modal: Strava onboarding (première connexion) ══════ -->
